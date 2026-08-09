@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
@@ -20,26 +21,42 @@ function useGoogleFonts() {
   }, []);
 }
 
-// Best-effort lookup of a Serbian example sentence (with Russian translation,
-// where available) from the free Tatoeba sentence corpus. Coverage for the
-// sr↔ru pair is limited, so this may often find nothing — that's expected,
-// manual entry is the reliable fallback.
+// Best-effort lookup of a plain Serbian example sentence from the free
+// Tatoeba sentence corpus (no translation required — just usage in context).
 async function fetchExampleFromTatoeba(srWord) {
-  const url = `https://tatoeba.org/eng/api_v0/search?from=srp&query=${encodeURIComponent(
-    srWord
-  )}&trans_filter=limit&trans_to=rus&to=rus`;
+  const url = `https://tatoeba.org/eng/api_v0/search?from=srp&query=${encodeURIComponent(srWord)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('tatoeba request failed');
   const json = await res.json();
   const results = json.results || [];
-  for (const r of results) {
-    const translations = (r.translations || []).flat();
-    const ruTrans = translations.find((t) => t.lang === 'rus');
-    if (r.text && ruTrans?.text) {
-      return { sr: r.text, ru: ruTrans.text };
-    }
-  }
-  return null;
+  const withText = results.find((r) => r.text);
+  return withText ? withText.text : null;
+}
+
+// Best-effort translation suggestions (sr → ru) via the free, CORS-enabled
+// MyMemory API. Returns a short list of distinct candidate translations —
+// quality varies since it's crowdsourced/machine translation, so these are
+// suggestions to review and pick from, not guaranteed-correct answers.
+async function fetchTranslationSuggestions(srWord) {
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(srWord)}&langpair=sr|ru`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('mymemory request failed');
+  const json = await res.json();
+  const candidates = [];
+  const seen = new Set();
+  const add = (text) => {
+    const t = text?.trim();
+    if (!t) return;
+    const key = t.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(t);
+  };
+  add(json.responseData?.translatedText);
+  (json.matches || [])
+    .sort((a, b) => (b.quality || 0) - (a.quality || 0))
+    .forEach((m) => add(m.translation));
+  return candidates.slice(0, 5);
 }
 
 function normalize(str) {
@@ -56,6 +73,149 @@ function acceptedAnswers(str) {
     .split(',')
     .map((s) => normalize(s))
     .filter(Boolean);
+}
+
+function parseVariants(str) {
+  return (str || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// Manages a list of accepted translation variants as chips: manual add,
+// remove, plus one-click suggestions fetched from a translation API.
+function VariantsEditor({ variants, onChange, srWord }) {
+  const [draft, setDraft] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestState, setSuggestState] = useState('idle'); // idle | loading | notfound | error
+
+  const addVariant = (text) => {
+    const t = text.trim();
+    if (!t) return;
+    if (variants.some((v) => v.toLowerCase() === t.toLowerCase())) return;
+    onChange([...variants, t]);
+  };
+
+  const removeVariant = (text) => {
+    onChange(variants.filter((v) => v !== text));
+  };
+
+  const commitDraft = () => {
+    addVariant(draft);
+    setDraft('');
+  };
+
+  const suggest = async () => {
+    if (!srWord.trim()) return;
+    setSuggestState('loading');
+    try {
+      const found = await fetchTranslationSuggestions(srWord.trim());
+      const fresh = found.filter((f) => !variants.some((v) => v.toLowerCase() === f.toLowerCase()));
+      if (fresh.length === 0) {
+        setSuggestState('notfound');
+        setSuggestions([]);
+      } else {
+        setSuggestions(fresh);
+        setSuggestState('idle');
+      }
+    } catch (e) {
+      setSuggestState('error');
+      setSuggestions([]);
+    }
+  };
+
+  return (
+    <div>
+      {variants.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {variants.map((v) => (
+            <span
+              key={v}
+              className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
+              style={{ background: '#F5F1E8', color: '#1C2333', fontSize: '0.85rem' }}
+            >
+              {v}
+              <button
+                type="button"
+                onClick={() => removeVariant(v)}
+                aria-label={`Уклони ${v}`}
+                style={{ color: '#A31C33', lineHeight: 1, fontWeight: 700 }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitDraft();
+            }
+          }}
+          placeholder="упиши превод и Enter"
+          className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
+          style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
+        />
+        <button
+          type="button"
+          onClick={suggest}
+          disabled={!srWord.trim() || suggestState === 'loading'}
+          className="flex items-center gap-1.5 rounded-lg px-3 shrink-0"
+          style={{
+            fontFamily: FONT_BODY,
+            fontSize: '0.78rem',
+            color: srWord.trim() ? '#D4A54A' : '#4B5680',
+            background: '#12192E',
+            border: '1px solid #2A3355',
+          }}
+          title="Предложи преводе (машински, провери пре него што сачуваш)"
+        >
+          {suggestState === 'loading' ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+          Предложи
+        </button>
+      </div>
+
+      {suggestState === 'notfound' && (
+        <p style={{ color: '#8892AE', fontSize: '0.72rem', marginTop: 6 }}>
+          Ништа ново није пронађено — унеси ручно.
+        </p>
+      )}
+      {suggestState === 'error' && (
+        <p style={{ color: '#8892AE', fontSize: '0.72rem', marginTop: 6 }}>
+          Претрага тренутно није доступна — унеси ручно.
+        </p>
+      )}
+      {suggestions.length > 0 && (
+        <div className="mt-2">
+          <div style={{ color: '#5C6690', fontSize: '0.7rem', marginBottom: 5, fontFamily: FONT_MONO }}>
+            ПРЕДЛОЗИ (КЛИКНИ ДА ДОДАШ)
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {suggestions.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => {
+                  addVariant(s);
+                  setSuggestions((prev) => prev.filter((x) => x !== s));
+                }}
+                className="rounded-full px-2.5 py-1"
+                style={{ background: '#2A2140', color: '#C9A8E8', fontSize: '0.82rem', border: '1px dashed #4A3A66' }}
+              >
+                + {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function App() {
@@ -544,7 +704,7 @@ const srCollator = new Intl.Collator('sr', { sensitivity: 'base' });
 function WordsList({ words, onDelete, onUpdate, onLink, onUnlink }) {
   const [editingId, setEditingId] = useState(null);
   const [editSr, setEditSr] = useState('');
-  const [editRu, setEditRu] = useState('');
+  const [editRuVariants, setEditRuVariants] = useState([]);
   const [editExample, setEditExample] = useState('');
   const [linkingId, setLinkingId] = useState(null); // word currently picking a related word
   const [linkQuery, setLinkQuery] = useState('');
@@ -571,14 +731,14 @@ function WordsList({ words, onDelete, onUpdate, onLink, onUnlink }) {
   const startEdit = (w) => {
     setEditingId(w.id);
     setEditSr(w.sr);
-    setEditRu(w.ru);
+    setEditRuVariants(parseVariants(w.ru));
     setEditExample(w.example || '');
     setLinkingId(null);
   };
 
   const saveEdit = () => {
-    if (editSr.trim() && editRu.trim()) {
-      onUpdate(editingId, editSr, editRu, editExample);
+    if (editSr.trim() && editRuVariants.length > 0) {
+      onUpdate(editingId, editSr, editRuVariants.join(', '), editExample);
     }
     setEditingId(null);
   };
@@ -621,13 +781,7 @@ function WordsList({ words, onDelete, onUpdate, onLink, onUnlink }) {
                   style={{ background: '#12192E', color: '#F5F1E8', border: '1px solid #3A4570' }}
                   placeholder="српски"
                 />
-                <input
-                  value={editRu}
-                  onChange={(e) => setEditRu(e.target.value)}
-                  className="rounded-md px-3 py-1.5 text-sm outline-none"
-                  style={{ background: '#12192E', color: '#F5F1E8', border: '1px solid #3A4570' }}
-                  placeholder="руски"
-                />
+                <VariantsEditor variants={editRuVariants} onChange={setEditRuVariants} srWord={editSr} />
                 <input
                   value={editExample}
                   onChange={(e) => setEditExample(e.target.value)}
@@ -810,7 +964,7 @@ function RelatedWordPicker({ word, allWords, query, onQueryChange, onPick, onCan
 
 function AddWord({ onAdd, goToList }) {
   const [sr, setSr] = useState('');
-  const [ru, setRu] = useState('');
+  const [ruVariants, setRuVariants] = useState([]);
   const [example, setExample] = useState('');
   const [justAdded, setJustAdded] = useState(false);
   const [lookupState, setLookupState] = useState('idle'); // idle | loading | notfound | error
@@ -818,10 +972,10 @@ function AddWord({ onAdd, goToList }) {
 
   const submit = (e) => {
     e.preventDefault();
-    if (!sr.trim() || !ru.trim()) return;
-    onAdd(sr, ru, example);
+    if (!sr.trim() || ruVariants.length === 0) return;
+    onAdd(sr, ruVariants.join(', '), example);
     setSr('');
-    setRu('');
+    setRuVariants([]);
     setExample('');
     setLookupState('idle');
     setJustAdded(true);
@@ -835,7 +989,7 @@ function AddWord({ onAdd, goToList }) {
     try {
       const found = await fetchExampleFromTatoeba(sr.trim());
       if (found) {
-        setExample(`${found.sr} — ${found.ru}`);
+        setExample(found);
         setLookupState('idle');
       } else {
         setLookupState('notfound');
@@ -844,6 +998,8 @@ function AddWord({ onAdd, goToList }) {
       setLookupState('error');
     }
   };
+
+  const canSubmit = sr.trim() && ruVariants.length > 0;
 
   return (
     <form
@@ -859,27 +1015,23 @@ function AddWord({ onAdd, goToList }) {
         value={sr}
         onChange={(e) => setSr(e.target.value)}
         placeholder="нпр. хвала"
-        className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-4 outline-none"
+        className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-5 outline-none"
         style={{ fontFamily: FONT_DISPLAY, fontSize: '1.05rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
       />
 
       <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
-        РУССКИЙ ПЕРЕВОД
+        ПРЕВОДИ (МОЖЕ ВИШЕ)
       </label>
-      <input
-        value={ru}
-        onChange={(e) => setRu(e.target.value)}
-        placeholder="напр. спасибо"
-        className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-1.5 outline-none"
-        style={{ fontFamily: FONT_DISPLAY, fontSize: '1.05rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
-      />
+      <div className="mt-1.5 mb-1">
+        <VariantsEditor variants={ruVariants} onChange={setRuVariants} srWord={sr} />
+      </div>
       <p style={{ color: '#5C6690', fontSize: '0.75rem', marginBottom: 20 }}>
-        Можете унети неколико прихватљивих превода одвојених зарезом.
+        На картици ће се рачунати тачним било који од ових превода.
       </p>
 
       <div className="flex items-center justify-between mb-1.5">
         <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
-          ПРИМЕР УПОТРЕБЕ (НЕОБАВЕЗНО)
+          ПРИМЕР УПОТРЕБЕ (НА СРПСКОМ, НЕОБАВЕЗНО)
         </label>
         <button
           type="button"
@@ -905,7 +1057,7 @@ function AddWord({ onAdd, goToList }) {
       <input
         value={example}
         onChange={(e) => setExample(e.target.value)}
-        placeholder="нпр. Хвала на помоћи. — Спасибо за помощь."
+        placeholder="нпр. Хвала на помоћи, много си љубазан."
         className="w-full rounded-lg px-3.5 py-2.5 mt-0 mb-1 outline-none"
         style={{ fontFamily: FONT_BODY, fontSize: '0.9rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
       />
@@ -919,17 +1071,17 @@ function AddWord({ onAdd, goToList }) {
           Претрага тренутно није доступна — унеси пример ручно.
         </p>
       )}
-      {lookupState === 'idle' && <div style={{ marginBottom: 8 }} />}
+      {(lookupState === 'idle' || lookupState === '') && <div style={{ marginBottom: 8 }} />}
 
       <div className="flex items-center gap-3 mt-4">
         <button
           type="submit"
-          disabled={!sr.trim() || !ru.trim()}
+          disabled={!canSubmit}
           className="rounded-lg px-5 py-2.5 text-sm font-semibold flex items-center gap-2"
           style={{
             fontFamily: FONT_BODY,
-            background: sr.trim() && ru.trim() ? '#C41E3A' : '#2A3355',
-            color: sr.trim() && ru.trim() ? '#F5F1E8' : '#5C6690',
+            background: canSubmit ? '#C41E3A' : '#2A3355',
+            color: canSubmit ? '#F5F1E8' : '#5C6690',
           }}
         >
           <Plus size={16} /> Додај реч
