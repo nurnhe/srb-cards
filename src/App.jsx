@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil } from 'lucide-react';
+import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -18,6 +18,28 @@ function useGoogleFonts() {
       'https://fonts.googleapis.com/css2?family=PT+Serif:ital,wght@0,400;0,700;1,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap';
     document.head.appendChild(link);
   }, []);
+}
+
+// Best-effort lookup of a Serbian example sentence (with Russian translation,
+// where available) from the free Tatoeba sentence corpus. Coverage for the
+// sr↔ru pair is limited, so this may often find nothing — that's expected,
+// manual entry is the reliable fallback.
+async function fetchExampleFromTatoeba(srWord) {
+  const url = `https://tatoeba.org/eng/api_v0/search?from=srp&query=${encodeURIComponent(
+    srWord
+  )}&trans_filter=limit&trans_to=rus&to=rus`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('tatoeba request failed');
+  const json = await res.json();
+  const results = json.results || [];
+  for (const r of results) {
+    const translations = (r.translations || []).flat();
+    const ruTrans = translations.find((t) => t.lang === 'rus');
+    if (r.text && ruTrans?.text) {
+      return { sr: r.text, ru: ruTrans.text };
+    }
+  }
+  return null;
 }
 
 function normalize(str) {
@@ -44,47 +66,66 @@ export default function App() {
   const [storageError, setStorageError] = useState(false);
   const [tab, setTab] = useState('practice');
 
-  // load all words from Supabase on mount
-  useEffect(() => {
-    (async () => {
-      const { data, error } = await supabase
-        .from('words')
-        .select('id, sr, ru')
-        .order('created_at', { ascending: true });
-      if (error) {
-        setStorageError(true);
-      } else {
-        setWords(data || []);
-      }
-      setReady(true);
-    })();
+  const attachLinks = useCallback((wordRows, linkRows) => {
+    const map = {};
+    (linkRows || []).forEach((l) => {
+      if (!map[l.word_id]) map[l.word_id] = [];
+      map[l.word_id].push(l.related_word_id);
+    });
+    return wordRows.map((w) => ({ ...w, relatedIds: map[w.id] || [] }));
   }, []);
 
-  const addWord = useCallback(async (sr, ru) => {
+  const reloadAll = useCallback(async () => {
+    const [wordsRes, linksRes] = await Promise.all([
+      supabase.from('words').select('id, sr, ru, example').order('created_at', { ascending: true }),
+      supabase.from('word_links').select('word_id, related_word_id'),
+    ]);
+    if (wordsRes.error || linksRes.error) {
+      setStorageError(true);
+      return;
+    }
+    setStorageError(false);
+    setWords(attachLinks(wordsRes.data || [], linksRes.data || []));
+  }, [attachLinks]);
+
+  // load words + links from Supabase on mount
+  useEffect(() => {
+    (async () => {
+      await reloadAll();
+      setReady(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const addWord = useCallback(async (sr, ru, example) => {
     const { data, error } = await supabase
       .from('words')
-      .insert({ sr: sr.trim(), ru: ru.trim() })
-      .select('id, sr, ru')
+      .insert({ sr: sr.trim(), ru: ru.trim(), example: example?.trim() || null })
+      .select('id, sr, ru, example')
       .single();
     if (error || !data) {
       setStorageError(true);
       return;
     }
     setStorageError(false);
-    setWords((prev) => [...prev, data]);
+    setWords((prev) => [...prev, { ...data, relatedIds: [] }]);
   }, []);
 
-  const updateWord = useCallback(async (id, sr, ru) => {
+  const updateWord = useCallback(async (id, sr, ru, example) => {
     const { error } = await supabase
       .from('words')
-      .update({ sr: sr.trim(), ru: ru.trim() })
+      .update({ sr: sr.trim(), ru: ru.trim(), example: example?.trim() || null })
       .eq('id', id);
     if (error) {
       setStorageError(true);
       return;
     }
     setStorageError(false);
-    setWords((prev) => prev.map((w) => (w.id === id ? { ...w, sr: sr.trim(), ru: ru.trim() } : w)));
+    setWords((prev) =>
+      prev.map((w) =>
+        w.id === id ? { ...w, sr: sr.trim(), ru: ru.trim(), example: example?.trim() || null } : w
+      )
+    );
   }, []);
 
   const deleteWord = useCallback(async (id) => {
@@ -94,9 +135,58 @@ export default function App() {
       return;
     }
     setStorageError(false);
-    setWords((prev) => prev.filter((w) => w.id !== id));
+    setWords((prev) =>
+      prev
+        .filter((w) => w.id !== id)
+        .map((w) => ({ ...w, relatedIds: w.relatedIds.filter((rid) => rid !== id) }))
+    );
   }, []);
 
+  const linkWords = useCallback(async (idA, idB) => {
+    if (idA === idB) return;
+    const { error } = await supabase
+      .from('word_links')
+      .upsert(
+        [
+          { word_id: idA, related_word_id: idB },
+          { word_id: idB, related_word_id: idA },
+        ],
+        { onConflict: 'word_id,related_word_id' }
+      );
+    if (error) {
+      setStorageError(true);
+      return;
+    }
+    setStorageError(false);
+    setWords((prev) =>
+      prev.map((w) => {
+        if (w.id === idA && !w.relatedIds.includes(idB)) return { ...w, relatedIds: [...w.relatedIds, idB] };
+        if (w.id === idB && !w.relatedIds.includes(idA)) return { ...w, relatedIds: [...w.relatedIds, idA] };
+        return w;
+      })
+    );
+  }, []);
+
+  const unlinkWords = useCallback(async (idA, idB) => {
+    const { error } = await supabase
+      .from('word_links')
+      .delete()
+      .or(
+        `and(word_id.eq.${idA},related_word_id.eq.${idB}),and(word_id.eq.${idB},related_word_id.eq.${idA})`
+      );
+    if (error) {
+      setStorageError(true);
+      return;
+    }
+    setStorageError(false);
+    setWords((prev) =>
+      prev.map((w) => {
+        if (w.id === idA) return { ...w, relatedIds: w.relatedIds.filter((rid) => rid !== idB) };
+        if (w.id === idB) return { ...w, relatedIds: w.relatedIds.filter((rid) => rid !== idA) };
+        return w;
+      })
+    );
+  }, []);
 
   return (
     <div
@@ -115,7 +205,13 @@ export default function App() {
           <>
             {tab === 'practice' && <Practice words={words} />}
             {tab === 'words' && (
-              <WordsList words={words} onDelete={deleteWord} onUpdate={updateWord} />
+              <WordsList
+                words={words}
+                onDelete={deleteWord}
+                onUpdate={updateWord}
+                onLink={linkWords}
+                onUnlink={unlinkWords}
+              />
             )}
             {tab === 'add' && <AddWord onAdd={addWord} goToList={() => setTab('words')} />}
           </>
@@ -397,6 +493,18 @@ function Practice({ words }) {
                 </span>
               </div>
             )}
+            {current.example && (
+              <div
+                style={{
+                  color: '#8A8368',
+                  fontSize: '0.82rem',
+                  fontStyle: 'italic',
+                  maxWidth: 360,
+                }}
+              >
+                «{current.example}»
+              </div>
+            )}
             <button
               onClick={next}
               className="rounded-lg px-6 py-2.5 text-sm font-semibold flex items-center gap-2"
@@ -431,10 +539,15 @@ function DirectionPill({ active, label, onClick }) {
 
 /* ---------------- WORDS LIST ---------------- */
 
-function WordsList({ words, onDelete, onUpdate }) {
+const srCollator = new Intl.Collator('sr', { sensitivity: 'base' });
+
+function WordsList({ words, onDelete, onUpdate, onLink, onUnlink }) {
   const [editingId, setEditingId] = useState(null);
   const [editSr, setEditSr] = useState('');
   const [editRu, setEditRu] = useState('');
+  const [editExample, setEditExample] = useState('');
+  const [linkingId, setLinkingId] = useState(null); // word currently picking a related word
+  const [linkQuery, setLinkQuery] = useState('');
 
   if (words.length === 0) {
     return (
@@ -452,88 +565,243 @@ function WordsList({ words, onDelete, onUpdate }) {
     );
   }
 
+  const sorted = [...words].sort((a, b) => srCollator.compare(a.sr, b.sr));
+  const byId = Object.fromEntries(words.map((w) => [w.id, w]));
+
   const startEdit = (w) => {
     setEditingId(w.id);
     setEditSr(w.sr);
     setEditRu(w.ru);
+    setEditExample(w.example || '');
+    setLinkingId(null);
   };
 
   const saveEdit = () => {
     if (editSr.trim() && editRu.trim()) {
-      onUpdate(editingId, editSr, editRu);
+      onUpdate(editingId, editSr, editRu, editExample);
     }
+    setEditingId(null);
+  };
+
+  const startLinking = (id) => {
+    setLinkingId(id);
+    setLinkQuery('');
     setEditingId(null);
   };
 
   return (
     <div className="flex flex-col gap-2">
-      {[...words].reverse().map((w) => (
-        <div
-          key={w.id}
-          className="rounded-xl px-4 py-3 flex items-center gap-3"
-          style={{ background: '#1B2440', border: '1px solid #2A3355' }}
-        >
-          {editingId === w.id ? (
-            <div className="flex-1 flex flex-col gap-2">
-              <input
-                value={editSr}
-                onChange={(e) => setEditSr(e.target.value)}
-                className="rounded-md px-3 py-1.5 text-sm outline-none"
-                style={{ background: '#12192E', color: '#F5F1E8', border: '1px solid #3A4570' }}
-                placeholder="српски"
-              />
-              <input
-                value={editRu}
-                onChange={(e) => setEditRu(e.target.value)}
-                className="rounded-md px-3 py-1.5 text-sm outline-none"
-                style={{ background: '#12192E', color: '#F5F1E8', border: '1px solid #3A4570' }}
-                placeholder="руски"
-              />
-              <div className="flex gap-2 mt-1">
-                <button
-                  onClick={saveEdit}
-                  className="text-xs font-semibold rounded-md px-3 py-1.5"
-                  style={{ background: '#3D8B5F', color: '#F5F1E8' }}
-                >
-                  Сачувај
-                </button>
-                <button
-                  onClick={() => setEditingId(null)}
-                  className="text-xs font-semibold rounded-md px-3 py-1.5"
-                  style={{ background: '#2A3355', color: '#8892AE' }}
-                >
-                  Откажи
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="flex-1 min-w-0">
-                <div style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>
-                  {w.sr}
+      <div
+        style={{
+          color: '#5C6690',
+          fontSize: '0.72rem',
+          fontFamily: FONT_MONO,
+          letterSpacing: 1,
+          marginBottom: 2,
+          paddingLeft: 4,
+        }}
+      >
+        А–Ш · {words.length} {words.length === 1 ? 'РЕЧ' : 'РЕЧИ'}
+      </div>
+
+      {sorted.map((w) => {
+        const related = w.relatedIds.map((rid) => byId[rid]).filter(Boolean);
+        return (
+          <div
+            key={w.id}
+            className="rounded-xl px-4 py-3 flex flex-col gap-2.5"
+            style={{ background: '#1B2440', border: '1px solid #2A3355' }}
+          >
+            {editingId === w.id ? (
+              <div className="flex flex-col gap-2">
+                <input
+                  value={editSr}
+                  onChange={(e) => setEditSr(e.target.value)}
+                  className="rounded-md px-3 py-1.5 text-sm outline-none"
+                  style={{ background: '#12192E', color: '#F5F1E8', border: '1px solid #3A4570' }}
+                  placeholder="српски"
+                />
+                <input
+                  value={editRu}
+                  onChange={(e) => setEditRu(e.target.value)}
+                  className="rounded-md px-3 py-1.5 text-sm outline-none"
+                  style={{ background: '#12192E', color: '#F5F1E8', border: '1px solid #3A4570' }}
+                  placeholder="руски"
+                />
+                <input
+                  value={editExample}
+                  onChange={(e) => setEditExample(e.target.value)}
+                  className="rounded-md px-3 py-1.5 text-sm outline-none"
+                  style={{ background: '#12192E', color: '#F5F1E8', border: '1px solid #3A4570' }}
+                  placeholder="пример употребе (необавезно)"
+                />
+                <div className="flex gap-2 mt-1">
+                  <button
+                    onClick={saveEdit}
+                    className="text-xs font-semibold rounded-md px-3 py-1.5"
+                    style={{ background: '#3D8B5F', color: '#F5F1E8' }}
+                  >
+                    Сачувај
+                  </button>
+                  <button
+                    onClick={() => setEditingId(null)}
+                    className="text-xs font-semibold rounded-md px-3 py-1.5"
+                    style={{ background: '#2A3355', color: '#8892AE' }}
+                  >
+                    Откажи
+                  </button>
                 </div>
-                <div style={{ color: '#8892AE', fontSize: '0.85rem', marginTop: 1 }}>{w.ru}</div>
               </div>
-              <button
-                onClick={() => startEdit(w)}
-                className="p-2 rounded-md shrink-0"
-                style={{ color: '#8892AE' }}
-                aria-label="Уреди"
-              >
-                <Pencil size={15} />
-              </button>
-              <button
-                onClick={() => onDelete(w.id)}
-                className="p-2 rounded-md shrink-0"
-                style={{ color: '#C41E3A' }}
-                aria-label="Обриши"
-              >
-                <Trash2 size={15} />
-              </button>
-            </>
-          )}
-        </div>
-      ))}
+            ) : (
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>
+                    {w.sr}
+                  </div>
+                  <div style={{ color: '#8892AE', fontSize: '0.85rem', marginTop: 1 }}>{w.ru}</div>
+                  {w.example && (
+                    <div
+                      style={{
+                        color: '#6B759C',
+                        fontSize: '0.8rem',
+                        marginTop: 4,
+                        fontStyle: 'italic',
+                      }}
+                    >
+                      «{w.example}»
+                    </div>
+                  )}
+                  {related.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {related.map((r) => (
+                        <span
+                          key={r.id}
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                          style={{
+                            background: '#2A2140',
+                            color: '#C9A8E8',
+                            fontSize: '0.72rem',
+                            fontFamily: FONT_MONO,
+                          }}
+                        >
+                          {r.sr}
+                          <button
+                            onClick={() => onUnlink(w.id, r.id)}
+                            aria-label={`Уклони везу са ${r.sr}`}
+                            style={{ color: '#8A6FA8', lineHeight: 1 }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <button
+                    onClick={() => startLinking(w.id)}
+                    className="p-2 rounded-md"
+                    style={{ color: '#8892AE' }}
+                    aria-label="Повежи са другом речи"
+                    title="Повежи са сродном речи"
+                  >
+                    <Link2 size={15} />
+                  </button>
+                  <button
+                    onClick={() => startEdit(w)}
+                    className="p-2 rounded-md"
+                    style={{ color: '#8892AE' }}
+                    aria-label="Уреди"
+                  >
+                    <Pencil size={15} />
+                  </button>
+                  <button
+                    onClick={() => onDelete(w.id)}
+                    className="p-2 rounded-md"
+                    style={{ color: '#C41E3A' }}
+                    aria-label="Обриши"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {linkingId === w.id && (
+              <RelatedWordPicker
+                word={w}
+                allWords={words}
+                query={linkQuery}
+                onQueryChange={setLinkQuery}
+                onPick={(otherId) => {
+                  onLink(w.id, otherId);
+                  setLinkingId(null);
+                }}
+                onCancel={() => setLinkingId(null)}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RelatedWordPicker({ word, allWords, query, onQueryChange, onPick, onCancel }) {
+  const candidates = allWords
+    .filter((w) => w.id !== word.id && !word.relatedIds.includes(w.id))
+    .filter((w) => {
+      if (!query.trim()) return true;
+      const q = normalize(query);
+      return normalize(w.sr).includes(q) || normalize(w.ru).includes(q);
+    })
+    .slice(0, 6);
+
+  return (
+    <div
+      className="rounded-lg p-3"
+      style={{ background: '#12192E', border: '1px solid #3A4570' }}
+    >
+      <div style={{ color: '#8892AE', fontSize: '0.78rem', marginBottom: 6 }}>
+        Повежи <span style={{ color: '#F5F1E8', fontWeight: 600 }}>{word.sr}</span> са сродном речи
+        (нпр. исти корен):
+      </div>
+      <input
+        autoFocus
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        placeholder="претражи речи…"
+        className="w-full rounded-md px-3 py-1.5 text-sm outline-none mb-2"
+        style={{ background: '#1B2440', color: '#F5F1E8', border: '1px solid #3A4570' }}
+      />
+      <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
+        {candidates.length === 0 ? (
+          <div style={{ color: '#5C6690', fontSize: '0.8rem', padding: '4px 2px' }}>
+            Нема резултата.
+          </div>
+        ) : (
+          candidates.map((w) => (
+            <button
+              key={w.id}
+              onClick={() => onPick(w.id)}
+              className="text-left rounded-md px-2.5 py-1.5 flex items-baseline gap-2"
+              style={{ background: '#1B2440' }}
+            >
+              <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '0.9rem' }}>
+                {w.sr}
+              </span>
+              <span style={{ color: '#8892AE', fontSize: '0.78rem' }}>{w.ru}</span>
+            </button>
+          ))
+        )}
+      </div>
+      <button
+        onClick={onCancel}
+        className="text-xs font-semibold rounded-md px-3 py-1.5 mt-2"
+        style={{ background: '#2A3355', color: '#8892AE' }}
+      >
+        Откажи
+      </button>
     </div>
   );
 }
@@ -543,18 +811,38 @@ function WordsList({ words, onDelete, onUpdate }) {
 function AddWord({ onAdd, goToList }) {
   const [sr, setSr] = useState('');
   const [ru, setRu] = useState('');
+  const [example, setExample] = useState('');
   const [justAdded, setJustAdded] = useState(false);
+  const [lookupState, setLookupState] = useState('idle'); // idle | loading | notfound | error
   const srRef = useRef(null);
 
   const submit = (e) => {
     e.preventDefault();
     if (!sr.trim() || !ru.trim()) return;
-    onAdd(sr, ru);
+    onAdd(sr, ru, example);
     setSr('');
     setRu('');
+    setExample('');
+    setLookupState('idle');
     setJustAdded(true);
     setTimeout(() => setJustAdded(false), 1600);
     srRef.current?.focus();
+  };
+
+  const lookupExample = async () => {
+    if (!sr.trim()) return;
+    setLookupState('loading');
+    try {
+      const found = await fetchExampleFromTatoeba(sr.trim());
+      if (found) {
+        setExample(`${found.sr} — ${found.ru}`);
+        setLookupState('idle');
+      } else {
+        setLookupState('notfound');
+      }
+    } catch (e) {
+      setLookupState('error');
+    }
   };
 
   return (
@@ -589,7 +877,51 @@ function AddWord({ onAdd, goToList }) {
         Можете унети неколико прихватљивих превода одвојених зарезом.
       </p>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between mb-1.5">
+        <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
+          ПРИМЕР УПОТРЕБЕ (НЕОБАВЕЗНО)
+        </label>
+        <button
+          type="button"
+          onClick={lookupExample}
+          disabled={!sr.trim() || lookupState === 'loading'}
+          className="flex items-center gap-1.5 rounded-md px-2.5 py-1"
+          style={{
+            fontFamily: FONT_BODY,
+            fontSize: '0.72rem',
+            color: sr.trim() ? '#D4A54A' : '#4B5680',
+            background: 'transparent',
+          }}
+          title="Потражи пример из Tatoeba корпуса (може не наћи ништа)"
+        >
+          {lookupState === 'loading' ? (
+            <Loader2 size={13} className="animate-spin" />
+          ) : (
+            <Search size={13} />
+          )}
+          Нађи пример
+        </button>
+      </div>
+      <input
+        value={example}
+        onChange={(e) => setExample(e.target.value)}
+        placeholder="нпр. Хвала на помоћи. — Спасибо за помощь."
+        className="w-full rounded-lg px-3.5 py-2.5 mt-0 mb-1 outline-none"
+        style={{ fontFamily: FONT_BODY, fontSize: '0.9rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
+      />
+      {lookupState === 'notfound' && (
+        <p style={{ color: '#8892AE', fontSize: '0.72rem', marginBottom: 12 }}>
+          Ништа нађено у бесплатној бази примера — унеси ручно.
+        </p>
+      )}
+      {lookupState === 'error' && (
+        <p style={{ color: '#8892AE', fontSize: '0.72rem', marginBottom: 12 }}>
+          Претрага тренутно није доступна — унеси пример ручно.
+        </p>
+      )}
+      {lookupState === 'idle' && <div style={{ marginBottom: 8 }} />}
+
+      <div className="flex items-center gap-3 mt-4">
         <button
           type="submit"
           disabled={!sr.trim() || !ru.trim()}
