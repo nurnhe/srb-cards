@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
@@ -31,6 +30,40 @@ async function fetchExampleFromTatoeba(srWord) {
   const results = json.results || [];
   const withText = results.find((r) => r.text);
   return withText ? withText.text : null;
+}
+
+// Fallback source: Glosbe's translation-memory endpoint, which pulls from
+// parallel corpora and often has broader (if messier) Serbian coverage than
+// Tatoeba. This is an unofficial/undocumented endpoint, so it's wrapped
+// defensively — if it changes or gets blocked, we just fall through.
+async function fetchExampleFromGlosbe(srWord) {
+  const url = `https://glosbe.com/gapi/tm?from=srp&dest=eng&format=json&pretty=true&phrase=${encodeURIComponent(
+    srWord
+  )}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('glosbe request failed');
+  const json = await res.json();
+  const tm = json.tm || [];
+  const withText = tm.find((t) => t.phrase && t.phrase.trim());
+  return withText ? withText.phrase.trim() : null;
+}
+
+// Tries Tatoeba first, then Glosbe as a fallback. Returns null if neither
+// source has anything — that's expected fairly often for Serbian.
+async function fetchExample(srWord) {
+  try {
+    const fromTatoeba = await fetchExampleFromTatoeba(srWord);
+    if (fromTatoeba) return fromTatoeba;
+  } catch (e) {
+    // fall through to the next source
+  }
+  try {
+    const fromGlosbe = await fetchExampleFromGlosbe(srWord);
+    if (fromGlosbe) return fromGlosbe;
+  } catch (e) {
+    // both sources failed or found nothing
+  }
+  return null;
 }
 
 // Best-effort translation suggestions (sr → ru) via the free, CORS-enabled
@@ -987,7 +1020,7 @@ function AddWord({ onAdd, goToList }) {
     if (!sr.trim()) return;
     setLookupState('loading');
     try {
-      const found = await fetchExampleFromTatoeba(sr.trim());
+      const found = await fetchExample(sr.trim());
       if (found) {
         setExample(found);
         setLookupState('idle');
