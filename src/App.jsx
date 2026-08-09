@@ -92,6 +92,92 @@ async function fetchTranslationSuggestions(srWord) {
   return candidates.slice(0, 5);
 }
 
+// ---- Serbian Cyrillic ↔ Latin transliteration ----
+// Serbian has a well-defined 1:1 letter correspondence between scripts
+// (a few multi-letter Latin digraphs: nj/lj/dž ↔ њ/љ/џ). This covers the
+// vast majority of vocabulary correctly; a handful of morpheme-boundary
+// edge cases (e.g. "nadživeti") aren't disambiguated, which is an accepted
+// trade-off for a personal vocab app.
+const CYR_TO_LAT = [
+  ['А', 'A'], ['Б', 'B'], ['В', 'V'], ['Г', 'G'], ['Д', 'D'], ['Ђ', 'Đ'],
+  ['Е', 'E'], ['Ж', 'Ž'], ['З', 'Z'], ['И', 'I'], ['Ј', 'J'], ['К', 'K'],
+  ['Л', 'L'], ['Љ', 'Lj'], ['М', 'M'], ['Н', 'N'], ['Њ', 'Nj'], ['О', 'O'],
+  ['П', 'P'], ['Р', 'R'], ['С', 'S'], ['Т', 'T'], ['Ћ', 'Ć'], ['У', 'U'],
+  ['Ф', 'F'], ['Х', 'H'], ['Ц', 'C'], ['Ч', 'Č'], ['Џ', 'Dž'], ['Ш', 'Š'],
+];
+
+const DIGRAPH_UPPER = { Lj: 'LJ', Nj: 'NJ', Dž: 'DŽ' };
+
+function cyrillicToLatin(str) {
+  if (!str) return str;
+  const isAllUpper = str === str.toUpperCase() && str !== str.toLowerCase();
+  let out = '';
+  for (const ch of str) {
+    const upper = ch.toUpperCase();
+    const isUpper = ch === upper && ch !== ch.toLowerCase();
+    const pair = CYR_TO_LAT.find(([cyr]) => cyr === upper);
+    if (!pair) {
+      out += ch;
+      continue;
+    }
+    let lat = pair[1];
+    if (lat.length === 2) {
+      if (isAllUpper) lat = DIGRAPH_UPPER[lat];
+      else if (!isUpper) lat = lat.toLowerCase();
+      // else: keep title-case ("Lj") for a standalone capital letter
+    } else if (!isUpper) {
+      lat = lat.toLowerCase();
+    }
+    out += lat;
+  }
+  return out;
+}
+
+// longest-match-first Latin sequences, each paired with its Cyrillic letter
+const LAT_TO_CYR = [
+  ['Lj', 'Љ'], ['Nj', 'Њ'], ['Dž', 'Џ'],
+  ['A', 'А'], ['B', 'Б'], ['V', 'В'], ['G', 'Г'], ['D', 'Д'], ['Đ', 'Ђ'],
+  ['E', 'Е'], ['Ž', 'Ж'], ['Z', 'З'], ['I', 'И'], ['J', 'Ј'], ['K', 'К'],
+  ['L', 'Л'], ['M', 'М'], ['N', 'Н'], ['O', 'О'], ['P', 'П'], ['R', 'Р'],
+  ['S', 'С'], ['T', 'Т'], ['Ć', 'Ћ'], ['U', 'У'], ['F', 'Ф'], ['H', 'Х'],
+  ['C', 'Ц'], ['Č', 'Ч'], ['Š', 'Ш'],
+].sort((a, b) => b[0].length - a[0].length);
+
+function latinToCyrillic(str) {
+  if (!str) return str;
+  let out = '';
+  let i = 0;
+  while (i < str.length) {
+    let matched = false;
+    for (const [lat, cyr] of LAT_TO_CYR) {
+      const slice = str.slice(i, i + lat.length);
+      if (slice.length === lat.length && slice.toUpperCase() === lat.toUpperCase()) {
+        const firstIsUpper = slice[0] === slice[0].toUpperCase() && slice[0] !== slice[0].toLowerCase();
+        out += firstIsUpper ? cyr : cyr.toLowerCase();
+        i += lat.length;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      out += str[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
+function isCyrillic(str) {
+  return /[\u0400-\u04FF]/.test(str);
+}
+
+// Given a Serbian word/phrase in either script, returns its counterpart in
+// the other script (or null if there's nothing script-specific to convert).
+function otherScript(sr) {
+  if (!sr || !sr.trim()) return null;
+  return isCyrillic(sr) ? cyrillicToLatin(sr) : latinToCyrillic(sr);
+}
+
 function normalize(str) {
   return str
     .trim()
@@ -123,9 +209,9 @@ function VariantsEditor({ variants, onChange, srWord }) {
   const [suggestState, setSuggestState] = useState('idle'); // idle | loading | notfound | error
 
   const addVariant = (text) => {
-    const t = text.trim();
+    const t = text.trim().toLowerCase();
     if (!t) return;
-    if (variants.some((v) => v.toLowerCase() === t.toLowerCase())) return;
+    if (variants.some((v) => v.toLowerCase() === t)) return;
     onChange([...variants, t]);
   };
 
@@ -293,7 +379,7 @@ export default function App() {
   const addWord = useCallback(async (sr, ru, example) => {
     const { data, error } = await supabase
       .from('words')
-      .insert({ sr: sr.trim(), ru: ru.trim(), example: example?.trim() || null })
+      .insert({ sr: sr.trim().toLowerCase(), ru: ru.trim().toLowerCase(), example: example?.trim() || null })
       .select('id, sr, ru, example')
       .single();
     if (error || !data) {
@@ -305,9 +391,11 @@ export default function App() {
   }, []);
 
   const updateWord = useCallback(async (id, sr, ru, example) => {
+    const nextSr = sr.trim().toLowerCase();
+    const nextRu = ru.trim().toLowerCase();
     const { error } = await supabase
       .from('words')
-      .update({ sr: sr.trim(), ru: ru.trim(), example: example?.trim() || null })
+      .update({ sr: nextSr, ru: nextRu, example: example?.trim() || null })
       .eq('id', id);
     if (error) {
       setStorageError(true);
@@ -316,7 +404,7 @@ export default function App() {
     setStorageError(false);
     setWords((prev) =>
       prev.map((w) =>
-        w.id === id ? { ...w, sr: sr.trim(), ru: ru.trim(), example: example?.trim() || null } : w
+        w.id === id ? { ...w, sr: nextSr, ru: nextRu, example: example?.trim() || null } : w
       )
     );
   }, []);
@@ -558,8 +646,14 @@ function Practice({ words }) {
 
   const checkAnswer = () => {
     if (!current || feedback) return;
-    const target = direction === 'sr-ru' ? current.ru : current.sr;
-    const isCorrect = acceptedAnswers(target).includes(normalize(input));
+    let isCorrect;
+    if (direction === 'sr-ru') {
+      isCorrect = acceptedAnswers(current.ru).includes(normalize(input));
+    } else {
+      const alt = otherScript(current.sr);
+      const targets = [current.sr, alt].filter(Boolean);
+      isCorrect = targets.some((t) => normalize(t) === normalize(input));
+    }
     setFeedback(isCorrect ? 'correct' : 'wrong');
     setSession((s) => ({ correct: s.correct + (isCorrect ? 1 : 0), total: s.total + 1 }));
   };
@@ -627,12 +721,24 @@ function Practice({ words }) {
             fontFamily: FONT_DISPLAY,
             fontSize: '2.1rem',
             color: '#1C2333',
-            marginBottom: 28,
+            marginBottom: direction === 'sr-ru' && otherScript(current.sr) ? 4 : 28,
             wordBreak: 'break-word',
           }}
         >
           {prompt}
         </div>
+        {direction === 'sr-ru' && otherScript(current.sr) && (
+          <div
+            style={{
+              fontFamily: FONT_BODY,
+              fontSize: '1rem',
+              color: '#9C9683',
+              marginBottom: 28,
+            }}
+          >
+            {otherScript(current.sr)}
+          </div>
+        )}
 
         {feedback === null ? (
           <div className="flex flex-col gap-3 items-center">
@@ -651,6 +757,11 @@ function Practice({ words }) {
                 color: '#1C2333',
               }}
             />
+            {direction === 'ru-sr' && (
+              <div style={{ color: '#9C9683', fontSize: '0.72rem' }}>
+                ћирилица или латиница — обе варијанте важе
+              </div>
+            )}
             <button
               onClick={checkAnswer}
               disabled={!input.trim()}
@@ -682,7 +793,9 @@ function Practice({ words }) {
               <div style={{ color: '#6B6455', fontSize: '0.9rem' }}>
                 Тачан одговор:{' '}
                 <span style={{ fontWeight: 600, color: '#1C2333' }}>
-                  {direction === 'sr-ru' ? current.ru : current.sr}
+                  {direction === 'sr-ru'
+                    ? current.ru
+                    : [current.sr, otherScript(current.sr)].filter(Boolean).join(' / ')}
                 </span>
               </div>
             )}
@@ -845,7 +958,12 @@ function WordsList({ words, onDelete, onUpdate, onLink, onUnlink }) {
                   <div style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>
                     {w.sr}
                   </div>
-                  <div style={{ color: '#8892AE', fontSize: '0.85rem', marginTop: 1 }}>{w.ru}</div>
+                  {otherScript(w.sr) && (
+                    <div style={{ color: '#5C6690', fontSize: '0.78rem', marginTop: 1 }}>
+                      {otherScript(w.sr)}
+                    </div>
+                  )}
+                  <div style={{ color: '#8892AE', fontSize: '0.85rem', marginTop: 3 }}>{w.ru}</div>
                   {w.example && (
                     <div
                       style={{
@@ -1048,9 +1166,17 @@ function AddWord({ onAdd, goToList }) {
         value={sr}
         onChange={(e) => setSr(e.target.value)}
         placeholder="нпр. хвала"
-        className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-5 outline-none"
+        className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-1.5 outline-none"
         style={{ fontFamily: FONT_DISPLAY, fontSize: '1.05rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
       />
+      {otherScript(sr) ? (
+        <p style={{ color: '#5C6690', fontSize: '0.78rem', marginBottom: 12 }}>
+          Друго писмо: <span style={{ color: '#8892AE' }}>{otherScript(sr)}</span> — додаје се
+          аутоматски, обе варијанте важе на картици.
+        </p>
+      ) : (
+        <div style={{ marginBottom: 12 }} />
+      )}
 
       <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
         ПРЕВОДИ (МОЖЕ ВИШЕ)
