@@ -640,7 +640,11 @@ function Practice({ words }) {
     );
   }
 
-  const prompt = direction === 'sr-ru' ? current?.sr : current?.ru;
+  // words exist but the deck hasn't drawn a first card yet (happens for one
+  // render right after mount/word-list changes, before the effect runs)
+  if (!current) return null;
+
+  const prompt = direction === 'sr-ru' ? current.sr : current.ru;
   const promptLabel = direction === 'sr-ru' ? 'СРПСКИ' : 'РУССКИЙ';
   const answerLabel = direction === 'sr-ru' ? 'РУССКИЙ' : 'СРПСКИ';
 
