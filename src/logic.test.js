@@ -11,6 +11,7 @@ import {
   buildWeightedDeck,
   findDuplicateWord,
   isAnswerCorrect,
+  isRelevantTranslationMatch,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -211,5 +212,57 @@ describe('isAnswerCorrect', () => {
 
   it('ignores case and punctuation differences', () => {
     expect(isAnswerCorrect('sr-ru', current, ' Спасибо! ')).toBe(true);
+  });
+});
+
+describe('isRelevantTranslationMatch', () => {
+  // Fixtures are real MyMemory API responses for sr|ru queries, captured
+  // while investigating the "Bible quotes" noise task.
+  const cleanWordMatch = {
+    segment: 'spasenje',
+    translation: 'спасение',
+    match: 0.85,
+  };
+  const bibleVerseMatch1 = {
+    segment: 'Jer videe oèi moje spasenje Tvoje,',
+    translation: 'ибо видели очи мои спасение Твое,',
+    match: 0.34,
+  };
+  const bibleVerseMatch2 = {
+    segment: 'Primajuæi kraj svoje vere, spasenje duama.',
+    translation: 'достигая наконец веры спасения душ.',
+    match: 0.3,
+  };
+  const borderlineSentenceMatch = {
+    segment: 'Budite joj prijatelj.',
+    translation: 'будьте ей другом.',
+    match: 0.56,
+  };
+
+  it('accepts a clean single-word match for single-word input', () => {
+    expect(isRelevantTranslationMatch(cleanWordMatch, 1)).toBe(true);
+  });
+
+  it('rejects long, low-match sentence matches (the Bible-quote case)', () => {
+    expect(isRelevantTranslationMatch(bibleVerseMatch1, 1)).toBe(false);
+    expect(isRelevantTranslationMatch(bibleVerseMatch2, 1)).toBe(false);
+  });
+
+  it('rejects a short-ish sentence match for single-word input even with a decent match score', () => {
+    // 3-word segment for a 1-word query — match score alone (0.56) isn't
+    // enough; this is still a sentence, not a word/short-phrase match.
+    expect(isRelevantTranslationMatch(borderlineSentenceMatch, 1)).toBe(false);
+  });
+
+  it('does not apply the segment-length cap for multi-word input', () => {
+    expect(isRelevantTranslationMatch(borderlineSentenceMatch, 3)).toBe(true);
+  });
+
+  it('rejects a low match score regardless of segment length', () => {
+    expect(isRelevantTranslationMatch({ segment: 'x', translation: 'y', match: 0.1 }, 1)).toBe(false);
+  });
+
+  it('treats a missing match score as unreliable', () => {
+    expect(isRelevantTranslationMatch({ segment: 'x', translation: 'y' }, 1)).toBe(false);
   });
 });

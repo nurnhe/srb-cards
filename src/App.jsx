@@ -8,6 +8,7 @@ import {
   buildWeightedDeck,
   findDuplicateWord,
   isAnswerCorrect,
+  isRelevantTranslationMatch,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -78,6 +79,8 @@ async function fetchExample(srWord) {
 // MyMemory API. Returns a short list of distinct candidate translations —
 // quality varies since it's crowdsourced/machine translation, so these are
 // suggestions to review and pick from, not guaranteed-correct answers.
+// Noisy matches (e.g. a Bible-translation sentence that happens to contain
+// the queried word) are filtered out — see isRelevantTranslationMatch.
 async function fetchTranslationSuggestions(srWord) {
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(srWord)}&langpair=sr|ru`;
   const res = await fetch(url);
@@ -93,9 +96,11 @@ async function fetchTranslationSuggestions(srWord) {
     seen.add(key);
     candidates.push(t);
   };
+  const inputWordCount = srWord.trim().split(/\s+/).filter(Boolean).length;
   add(json.responseData?.translatedText);
   (json.matches || [])
-    .sort((a, b) => (b.quality || 0) - (a.quality || 0))
+    .filter((m) => isRelevantTranslationMatch(m, inputWordCount))
+    .sort((a, b) => (b.match || 0) - (a.match || 0) || (b.quality || 0) - (a.quality || 0))
     .forEach((m) => add(m.translation));
   return candidates.slice(0, 5);
 }

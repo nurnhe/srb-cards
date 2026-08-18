@@ -1,6 +1,24 @@
 // Pure, framework-free logic used by App.jsx — kept in its own module (no
 // React, no Supabase) so it can be unit-tested in isolation.
 
+// Decides whether a MyMemory translation-memory match is worth showing as
+// a suggestion, vs. noise pulled in from an unrelated corpus (e.g. a Bible
+// translation matching one word of a much longer verse). Two signals:
+// - `match` (MyMemory's own 0-1 score for how well the matched segment
+//   corresponds to the query) below 0.5 is treated as an unreliable hit.
+// - For single-word input, a segment longer than 2 words is almost never
+//   a direct word/short-phrase translation — it's a sentence that happens
+//   to contain the word somewhere in it.
+export function isRelevantTranslationMatch(match, inputWordCount) {
+  const score = match?.match ?? 0;
+  if (score < 0.5) return false;
+  if (inputWordCount === 1) {
+    const segmentWordCount = (match?.segment || '').trim().split(/\s+/).filter(Boolean).length;
+    if (segmentWordCount > 2) return false;
+  }
+  return true;
+}
+
 // ---- Serbian Cyrillic ↔ Latin transliteration ----
 // Serbian has a well-defined 1:1 letter correspondence between scripts
 // (a few multi-letter Latin digraphs: nj/lj/dž ↔ њ/љ/џ). This covers the
