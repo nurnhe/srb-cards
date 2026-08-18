@@ -327,3 +327,16 @@ export function pickSerbianVoice(voices) {
   const isSerbian = (v) => (v?.lang || '').toLowerCase().startsWith('sr');
   return list.find((v) => (v?.lang || '').toLowerCase() === 'sr-rs') || list.find(isSerbian) || null;
 }
+
+// Google Translate's TTS endpoint — unofficial and undocumented (it's the
+// same one translate.google.com's own UI calls, not a published public
+// API), so it could change or start rate-limiting without notice. Used
+// via an <audio> element rather than fetch(), which sidesteps CORS since
+// playback doesn't require reading the response — but also means it can't
+// be verified from plain JS beyond "did the URL get built correctly."
+// Chosen anyway because actual Serbian speech beats a wrong-language
+// SpeechSynthesis fallback voice; browser TTS remains the last-resort
+// fallback if this fails.
+export function googleTranslateTtsUrl(text) {
+  return `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&q=${encodeURIComponent(text)}&tl=sr`;
+}

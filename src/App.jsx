@@ -16,6 +16,7 @@ import {
   isTypoCorrected,
   findLikelyTypoOf,
   pickSerbianVoice,
+  googleTranslateTtsUrl,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -122,6 +123,27 @@ async function fetchRelatedWordsFromWiktionary(srWord) {
   return terms.length > 0 ? terms : null;
 }
 
+// Best-effort IPA pronunciation lookup, reusing the same Wiktionary REST
+// endpoint/section as the related-words lookup above (a separate request,
+// though, since this one fires opportunistically off the pronounce button
+// rather than requiring a user to click "Прикажи повезане речи" first).
+// Grabs the first IPA span in the Serbo-Croatian section rather than
+// trying to disambiguate multiple etymologies — good enough for a
+// best-effort hint, not meant to be exhaustive.
+async function fetchIpaFromWiktionary(srWord) {
+  const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const heading = doc.getElementById('Serbo-Croatian');
+  const section = heading?.closest('section');
+  if (!section) return null;
+  const ipaEl = section.querySelector('.IPA');
+  const text = ipaEl?.textContent?.trim();
+  return text || null;
+}
+
 // Best-effort translation suggestions (sr → ru) via the free, CORS-enabled
 // MyMemory API. Returns a short list of distinct candidate translations —
 // quality varies since it's crowdsourced/machine translation, so these are
@@ -177,21 +199,30 @@ function getVoicesAsync() {
   });
 }
 
-// Small speaker button that reads a Serbian word aloud via the browser's
-// SpeechSynthesis API — free, no network request, no API key, but voice
-// availability/quality genuinely varies by browser and device (there's no
-// guarantee of a native Serbian voice at all). Hides itself entirely when
-// the API isn't supported, rather than showing a button that can't work.
+// Speaker button that plays a Serbian word's real pronunciation via
+// Google Translate's TTS audio (see googleTranslateTtsUrl — unofficial
+// endpoint, best-effort), falling back to the browser's SpeechSynthesis
+// API only if that fails to play. Also opportunistically fetches an IPA
+// transcription from Wiktionary on first click and shows it once found,
+// as a text-only complement (helpful even when no audio is available at
+// all, and a sanity check against the audio when it is).
 function PronounceButton({ text, size = 15 }) {
-  const [supported, setSupported] = useState(true);
+  const [playState, setPlayState] = useState('idle'); // idle | loading | playing
+  const [usedFallback, setUsedFallback] = useState(false);
   const [hasNativeVoice, setHasNativeVoice] = useState(true);
-  const [speaking, setSpeaking] = useState(false);
+  const [ipa, setIpa] = useState(null); // null = not fetched yet, '' = fetched, none found
+
+  // Per-word state shouldn't leak across cards in Practice, where this
+  // component instance is reused as `text` changes underneath it.
+  useEffect(() => {
+    setPlayState('idle');
+    setUsedFallback(false);
+    setIpa(null);
+    window.speechSynthesis?.cancel();
+  }, [text]);
 
   useEffect(() => {
-    if (!('speechSynthesis' in window)) {
-      setSupported(false);
-      return;
-    }
+    if (!('speechSynthesis' in window)) return;
     let cancelled = false;
     getVoicesAsync().then((voices) => {
       if (!cancelled) setHasNativeVoice(!!pickSerbianVoice(voices));
@@ -201,32 +232,64 @@ function PronounceButton({ text, size = 15 }) {
     };
   }, []);
 
-  if (!supported || !text?.trim()) return null;
+  if (!text?.trim()) return null;
+  const cleanText = text.trim();
 
-  const speak = async (e) => {
-    e.stopPropagation();
+  const speakViaBrowser = async () => {
+    if (!('speechSynthesis' in window)) {
+      setPlayState('idle');
+      return;
+    }
+    setUsedFallback(true);
     const voices = await getVoicesAsync();
     const voice = pickSerbianVoice(voices);
-    const utter = new SpeechSynthesisUtterance(text.trim());
+    const utter = new SpeechSynthesisUtterance(cleanText);
     utter.lang = voice ? voice.lang : 'sr-RS';
     if (voice) utter.voice = voice;
-    utter.onstart = () => setSpeaking(true);
-    utter.onend = () => setSpeaking(false);
-    utter.onerror = () => setSpeaking(false);
+    utter.onstart = () => setPlayState('playing');
+    utter.onend = () => setPlayState('idle');
+    utter.onerror = () => setPlayState('idle');
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utter);
   };
 
+  const play = (e) => {
+    e.stopPropagation();
+    setPlayState('loading');
+    const audio = new Audio(googleTranslateTtsUrl(cleanText));
+    audio.onplay = () => setPlayState('playing');
+    audio.onended = () => setPlayState('idle');
+    audio.onerror = () => speakViaBrowser();
+    audio.play().catch(() => speakViaBrowser());
+
+    if (ipa === null) {
+      fetchIpaFromWiktionary(cleanText)
+        .then((found) => setIpa(found || ''))
+        .catch(() => setIpa(''));
+    }
+  };
+
+  const title = usedFallback
+    ? hasNativeVoice
+      ? 'Изговори (резервни изговор — Google TTS није успео)'
+      : 'Изговори (резервни изговор, нема српског гласа на овом уређају)'
+    : 'Изговори';
+
   return (
-    <button
-      type="button"
-      onClick={speak}
-      title={hasNativeVoice ? 'Изговори' : 'Изговори (нема српског гласа на овом уређају)'}
-      aria-label={`Изговори ${text}`}
-      style={{ color: speaking ? '#D4A54A' : hasNativeVoice ? '#8892AE' : '#5C6690', lineHeight: 0 }}
-    >
-      <Volume2 size={size} />
-    </button>
+    <span className="inline-flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={play}
+        title={title}
+        aria-label={`Изговори ${cleanText}`}
+        style={{ color: playState !== 'idle' ? '#D4A54A' : '#8892AE', lineHeight: 0 }}
+      >
+        {playState === 'loading' ? <Loader2 size={size} className="animate-spin" /> : <Volume2 size={size} />}
+      </button>
+      {ipa && (
+        <span style={{ fontFamily: FONT_MONO, fontSize: '0.75em', color: '#8892AE' }}>{ipa}</span>
+      )}
+    </span>
   );
 }
 

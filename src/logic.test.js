@@ -21,6 +21,7 @@ import {
   findLikelyTypoOf,
   isTypoCorrected,
   pickSerbianVoice,
+  googleTranslateTtsUrl,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -578,5 +579,19 @@ describe('pickSerbianVoice', () => {
   it('handles an empty or missing voice list', () => {
     expect(pickSerbianVoice([])).toBeNull();
     expect(pickSerbianVoice(null)).toBeNull();
+  });
+});
+
+describe('googleTranslateTtsUrl', () => {
+  it('builds a URL targeting Serbian with the text URL-encoded', () => {
+    const url = googleTranslateTtsUrl('hvala');
+    expect(url).toContain('tl=sr');
+    expect(url).toContain('q=hvala');
+    expect(url).toMatch(/^https:\/\/translate\.google\.com\/translate_tts\?/);
+  });
+
+  it('encodes special characters and Cyrillic text', () => {
+    const url = googleTranslateTtsUrl('хвала пуно');
+    expect(url).toContain(encodeURIComponent('хвала пуно'));
   });
 });
