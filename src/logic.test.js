@@ -15,6 +15,7 @@ import {
   isRelevantTranslationMatch,
   isPlausibleRussianText,
   suggestTagsFromRelatedWords,
+  filterWordsByQuery,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -281,6 +282,49 @@ describe('suggestTagsFromRelatedWords', () => {
 
   it('returns an empty array when nothing is selected', () => {
     expect(suggestTagsFromRelatedWords([], words, tags)).toEqual([]);
+  });
+});
+
+describe('filterWordsByQuery', () => {
+  const words = [
+    { id: '1', sr: 'хвала', ru: 'спасибо' },
+    { id: '2', sr: 'izlaz', ru: 'выход' },
+    { id: '3', sr: 'moliti', ru: 'просить, молить' },
+  ];
+  const ids = (result) => result.map((w) => w.id);
+
+  it('matches by sr substring in the stored script', () => {
+    expect(ids(filterWordsByQuery(words, 'хвал'))).toEqual(['1']);
+  });
+
+  it('matches sr typed in the other script than it is stored in', () => {
+    expect(ids(filterWordsByQuery(words, 'hval'))).toEqual(['1']);
+    expect(ids(filterWordsByQuery(words, 'излаз'))).toEqual(['2']);
+  });
+
+  it('matches by ru substring', () => {
+    expect(ids(filterWordsByQuery(words, 'спасиб'))).toEqual(['1']);
+  });
+
+  it('matches inside any comma-separated ru variant', () => {
+    expect(ids(filterWordsByQuery(words, 'молит'))).toEqual(['3']);
+  });
+
+  it('is case-insensitive', () => {
+    expect(ids(filterWordsByQuery(words, 'ХВАЛ'))).toEqual(['1']);
+  });
+
+  it('returns every word for an empty or whitespace-only query', () => {
+    expect(filterWordsByQuery(words, '')).toEqual(words);
+    expect(filterWordsByQuery(words, '   ')).toEqual(words);
+  });
+
+  it('returns an empty array when nothing matches', () => {
+    expect(filterWordsByQuery(words, 'zzz')).toEqual([]);
+  });
+
+  it('handles a missing words list without throwing', () => {
+    expect(filterWordsByQuery(null, 'x')).toEqual([]);
   });
 });
 
