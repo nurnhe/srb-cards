@@ -12,6 +12,7 @@ import {
   findDuplicateWord,
   isAnswerCorrect,
   isRelevantTranslationMatch,
+  isPlausibleRussianText,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -264,5 +265,24 @@ describe('isRelevantTranslationMatch', () => {
 
   it('treats a missing match score as unreliable', () => {
     expect(isRelevantTranslationMatch({ segment: 'x', translation: 'y' }, 1)).toBe(false);
+  });
+});
+
+describe('isPlausibleRussianText', () => {
+  it('accepts genuine Cyrillic Russian text', () => {
+    expect(isPlausibleRussianText('грех')).toBe(true);
+    expect(isPlausibleRussianText('спасибо, благодарю')).toBe(true);
+  });
+
+  it('rejects English text MyMemory sometimes returns despite the sr|ru langpair', () => {
+    // Real bug: querying "greh" returned responseData.translatedText "sin"
+    // (English) instead of "грех" (Russian) — see the "English translation
+    // is suggested" bug report.
+    expect(isPlausibleRussianText('sin')).toBe(false);
+  });
+
+  it('rejects empty/missing text', () => {
+    expect(isPlausibleRussianText('')).toBe(false);
+    expect(isPlausibleRussianText(undefined)).toBe(false);
   });
 });

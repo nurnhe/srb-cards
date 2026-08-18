@@ -19,6 +19,14 @@ export function isRelevantTranslationMatch(match, inputWordCount) {
   return true;
 }
 
+// MyMemory occasionally returns text in the wrong language despite the
+// sr|ru langpair being requested (e.g. the English "sin" instead of the
+// Russian "грех" for the query "greh"). Genuine Russian text is always
+// Cyrillic, so this catches that without needing real language detection.
+export function isPlausibleRussianText(text) {
+  return isCyrillic(text || '');
+}
+
 // ---- Serbian Cyrillic ↔ Latin transliteration ----
 // Serbian has a well-defined 1:1 letter correspondence between scripts
 // (a few multi-letter Latin digraphs: nj/lj/dž ↔ њ/љ/џ). This covers the

@@ -9,6 +9,7 @@ import {
   findDuplicateWord,
   isAnswerCorrect,
   isRelevantTranslationMatch,
+  isPlausibleRussianText,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -81,6 +82,8 @@ async function fetchExample(srWord) {
 // suggestions to review and pick from, not guaranteed-correct answers.
 // Noisy matches (e.g. a Bible-translation sentence that happens to contain
 // the queried word) are filtered out — see isRelevantTranslationMatch.
+// Wrong-language results (MyMemory occasionally returns English despite
+// the sr|ru langpair) are filtered out too — see isPlausibleRussianText.
 async function fetchTranslationSuggestions(srWord) {
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(srWord)}&langpair=sr|ru`;
   const res = await fetch(url);
@@ -90,7 +93,7 @@ async function fetchTranslationSuggestions(srWord) {
   const seen = new Set();
   const add = (text) => {
     const t = text?.trim();
-    if (!t) return;
+    if (!t || !isPlausibleRussianText(t)) return;
     const key = t.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
