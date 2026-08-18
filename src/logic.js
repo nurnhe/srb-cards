@@ -204,6 +204,28 @@ export function findDuplicateWord(sr, words) {
   );
 }
 
+// Suggests tags for a word being added, based on tags already applied to
+// related words the user has picked to link (only words that already exist
+// in the dictionary carry tags at this point — newly-added related words
+// don't have any yet). Preserves first-seen order, dedupes, and skips
+// tags already selected for the new word.
+export function suggestTagsFromRelatedWords(relatedSrList, words, tags, excludeTagNames = []) {
+  const excluded = new Set((excludeTagNames || []).map((n) => n.toLowerCase()));
+  const tagNameById = Object.fromEntries((tags || []).map((t) => [t.id, t.name]));
+  const seen = new Set();
+  const suggestions = [];
+  (relatedSrList || []).forEach((sr) => {
+    const word = findDuplicateWord(sr, words);
+    (word?.tagIds || []).forEach((tagId) => {
+      const name = tagNameById[tagId];
+      if (!name || excluded.has(name.toLowerCase()) || seen.has(name)) return;
+      seen.add(name);
+      suggestions.push(name);
+    });
+  });
+  return suggestions;
+}
+
 // Checks a typed practice answer against the current card, accepting either
 // script for sr-direction answers and any saved translation variant for
 // ru-direction answers.
