@@ -168,6 +168,26 @@ export function buildWeightedDeck(pool) {
   return shuffled;
 }
 
+// Re-inserts a just-missed word into the *remaining* current-cycle deck so
+// it resurfaces again within the same session — not immediately (that's
+// annoying and doesn't test retention), and not only at the next full
+// cycle rebuild (too late to feel like a consequence of the mistake).
+// Modeled on how Duolingo requeues a missed item a handful of questions
+// later within the same lesson. The gap is randomized within a range and
+// clamped to the deck's actual remaining length, so a miss near the end
+// of a cycle just requeues near the end rather than overflowing.
+export function requeueMissedWord(deck, wordId, { minGap = 3, maxGap = 7 } = {}) {
+  // Nothing left in this cycle to insert "later" into — forcing it in here
+  // would mean an immediate repeat. Let the next cycle's weighted rebuild
+  // pick it up instead (wrong_count is already updated by then).
+  if (deck.length === 0) return deck;
+  const gap = minGap + Math.floor(Math.random() * (maxGap - minGap + 1));
+  const insertAt = Math.min(gap, deck.length);
+  const next = [...deck];
+  next.splice(insertAt, 0, wordId);
+  return next;
+}
+
 // Matches an entered sr word against existing words, accounting for both
 // Cyrillic and Latin spellings (typing either script should still catch
 // a duplicate stored in the other script). Returns the matching word, or

@@ -9,6 +9,7 @@ import {
   parseVariants,
   shuffle,
   buildWeightedDeck,
+  requeueMissedWord,
   findDuplicateWord,
   isAnswerCorrect,
   isRelevantTranslationMatch,
@@ -168,6 +169,48 @@ describe('buildWeightedDeck', () => {
       }
     }
     expect(adjacentRepeats / runs).toBeLessThan(2);
+  });
+});
+
+describe('requeueMissedWord', () => {
+  it('inserts the missed word somewhere later in the deck, not at the very front', () => {
+    const deck = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
+    const result = requeueMissedWord(deck, 'missed', { minGap: 3, maxGap: 7 });
+    const insertedAt = result.indexOf('missed');
+    expect(insertedAt).toBeGreaterThanOrEqual(3);
+    expect(insertedAt).toBeLessThanOrEqual(7);
+  });
+
+  it('never inserts at position 0 (never an immediate repeat) across many runs', () => {
+    const deck = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
+    for (let i = 0; i < 50; i++) {
+      const result = requeueMissedWord(deck, 'missed');
+      expect(result.indexOf('missed')).toBeGreaterThan(0);
+    }
+  });
+
+  it('clamps the insertion point to the end of a short deck instead of throwing', () => {
+    const deck = ['a'];
+    const result = requeueMissedWord(deck, 'missed', { minGap: 3, maxGap: 7 });
+    expect(result).toEqual(['a', 'missed']);
+  });
+
+  it('leaves an already-empty deck untouched (defers to the next cycle instead of forcing an immediate repeat)', () => {
+    const result = requeueMissedWord([], 'missed');
+    expect(result).toEqual([]);
+  });
+
+  it('does not mutate the original deck', () => {
+    const deck = ['a', 'b', 'c'];
+    requeueMissedWord(deck, 'missed');
+    expect(deck).toEqual(['a', 'b', 'c']);
+  });
+
+  it('can insert multiple times for repeated misses of the same word', () => {
+    let deck = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    deck = requeueMissedWord(deck, 'x', { minGap: 1, maxGap: 1 });
+    deck = requeueMissedWord(deck, 'x', { minGap: 1, maxGap: 1 });
+    expect(deck.filter((id) => id === 'x')).toHaveLength(2);
   });
 });
 

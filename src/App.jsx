@@ -6,6 +6,7 @@ import {
   normalize,
   parseVariants,
   buildWeightedDeck,
+  requeueMissedWord,
   findDuplicateWord,
   isAnswerCorrect,
   isRelevantTranslationMatch,
@@ -677,6 +678,11 @@ function Practice({ words, tags, onAnswer }) {
     setFeedback(isCorrect ? 'correct' : 'wrong');
     setSession((s) => ({ correct: s.correct + (isCorrect ? 1 : 0), total: s.total + 1 }));
     onAnswer(current.id, isCorrect);
+    if (!isCorrect) {
+      // resurface this word again later in the *current* cycle, not just
+      // the next one — see requeueMissedWord
+      deckRef.current = requeueMissedWord(deckRef.current, current.id);
+    }
   };
 
   const next = () => {
