@@ -676,7 +676,10 @@ function Practice({ words, tags, onAnswer }) {
   // words with more wrong answers — see buildWeightedDeck.
   const deckRef = useRef([]);
 
-  const pool = tagFilter.size > 0 ? words.filter((w) => w.tagIds.some((id) => tagFilter.has(id))) : words;
+  // A word must have ALL selected tags (intersection), not just any one
+  // of them — selecting more tags narrows the pool.
+  const pool =
+    tagFilter.size > 0 ? words.filter((w) => Array.from(tagFilter).every((id) => w.tagIds.includes(id))) : words;
 
   const drawNext = useCallback(
     (excludeId) => {
@@ -944,9 +947,8 @@ function Practice({ words, tags, onAnswer }) {
   );
 }
 
-// tagFilter is a Set of tag ids — a word matches if it has ANY of the
-// selected tags, so checking multiple pills broadens the pool rather
-// than narrowing it to an intersection.
+// tagFilter is a Set of tag ids — a word matches only if it has ALL of
+// the selected tags, so checking multiple pills narrows the pool.
 function TagScopeBar({ tags, tagFilter, onChange }) {
   if (!tags || tags.length === 0) return null;
   const toggle = (id) => {
@@ -1070,8 +1072,12 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     }
     return srCollator.compare(a.sr, b.sr);
   });
+  // A word must have ALL selected tags (intersection), not just any one
+  // of them — selecting more tags narrows the list.
   const filtered =
-    activeTagFilter.size > 0 ? sorted.filter((w) => w.tagIds.some((id) => activeTagFilter.has(id))) : sorted;
+    activeTagFilter.size > 0
+      ? sorted.filter((w) => Array.from(activeTagFilter).every((id) => w.tagIds.includes(id)))
+      : sorted;
   const byId = Object.fromEntries(words.map((w) => [w.id, w]));
   const tagById = Object.fromEntries((tags || []).map((t) => [t.id, t]));
 
