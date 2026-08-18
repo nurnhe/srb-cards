@@ -435,27 +435,6 @@ export default function App() {
     );
   }, []);
 
-  // Adds the main word, then any selected related words (e.g. picked from
-  // the Wiktionary related-words list) that have a translation filled in —
-  // reusing an existing dictionary entry instead of creating a duplicate
-  // where one already matches — and links each of them to the main word.
-  // relatedSelections: [{ sr, ru }]
-  const addWordWithRelated = useCallback(
-    async (sr, ru, example, relatedSelections) => {
-      const mainWord = await addWord(sr, ru, example);
-      if (!mainWord) return;
-      for (const rel of relatedSelections || []) {
-        if (!rel.ru || !rel.ru.trim()) continue;
-        const existing = findDuplicateWord(rel.sr, words);
-        const relatedWord = existing || (await addWord(rel.sr, rel.ru, null));
-        if (relatedWord && relatedWord.id !== mainWord.id) {
-          await linkWords(mainWord.id, relatedWord.id);
-        }
-      }
-    },
-    [addWord, linkWords, words]
-  );
-
   const unlinkWords = useCallback(async (idA, idB) => {
     const { error } = await supabase
       .from('word_links')
@@ -518,6 +497,41 @@ export default function App() {
     [ensureTag]
   );
 
+  // Adds the main word, then any selected related words (e.g. picked from
+  // the Wiktionary related-words list) — reusing an existing dictionary
+  // entry instead of creating a duplicate where one already matches. A
+  // translation is only required for words that need to be *created*; a
+  // word that already exists just gets linked, using its existing
+  // translation. Every word in the resulting group (main word + all
+  // related words) is linked to every other one — a whole word family
+  // added together should be mutually connected, not just each related
+  // word linked back to the main word alone. Any selected tags are
+  // applied to the main word only (tags picked while adding this word
+  // describe this word, not automatically its related words).
+  // relatedSelections: [{ sr, ru }], tagNames: [string]
+  const addWordWithRelated = useCallback(
+    async (sr, ru, example, relatedSelections, tagNames) => {
+      const mainWord = await addWord(sr, ru, example);
+      if (!mainWord) return;
+      const group = [mainWord];
+      for (const rel of relatedSelections || []) {
+        const existing = findDuplicateWord(rel.sr, words);
+        if (!existing && (!rel.ru || !rel.ru.trim())) continue;
+        const relatedWord = existing || (await addWord(rel.sr, rel.ru, null));
+        if (relatedWord) group.push(relatedWord);
+      }
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          await linkWords(group[i].id, group[j].id);
+        }
+      }
+      for (const name of tagNames || []) {
+        await tagWord(mainWord.id, name);
+      }
+    },
+    [addWord, linkWords, tagWord, words]
+  );
+
   const untagWord = useCallback(async (wordId, tagId) => {
     const { error } = await supabase
       .from('word_tags')
@@ -562,7 +576,9 @@ export default function App() {
                 onUntag={untagWord}
               />
             )}
-            {tab === 'add' && <AddWord onAdd={addWordWithRelated} goToList={() => setTab('words')} words={words} />}
+            {tab === 'add' && (
+              <AddWord onAdd={addWordWithRelated} goToList={() => setTab('words')} words={words} tags={tags} />
+            )}
           </>
         )}
 
@@ -1460,7 +1476,7 @@ function RelatedWordPicker({ word, allWords, query, onQueryChange, onPick, onCan
 
 /* ---------------- ADD WORD ---------------- */
 
-function AddWord({ onAdd, goToList, words }) {
+function AddWord({ onAdd, goToList, words, tags }) {
   const [sr, setSr] = useState('');
   const [ruVariants, setRuVariants] = useState([]);
   const [example, setExample] = useState('');
@@ -1471,7 +1487,20 @@ function AddWord({ onAdd, goToList, words }) {
   // Related words the user has picked to also add to the dictionary —
   // { [word]: { ru: string, status: 'loading' | 'idle' } }
   const [relatedSelections, setRelatedSelections] = useState({});
+  const [selectedTagNames, setSelectedTagNames] = useState([]);
+  const [tagQuery, setTagQuery] = useState('');
   const srRef = useRef(null);
+
+  const addTagName = (name) => {
+    const clean = name.trim().toLowerCase();
+    if (!clean || selectedTagNames.includes(clean)) return;
+    setSelectedTagNames((prev) => [...prev, clean]);
+    setTagQuery('');
+  };
+
+  const removeTagName = (name) => {
+    setSelectedTagNames((prev) => prev.filter((t) => t !== name));
+  };
 
   // Matches an entered sr word against existing words, accounting for both
   // Cyrillic and Latin spellings (typing either script should still catch
@@ -1506,7 +1535,7 @@ function AddWord({ onAdd, goToList, words }) {
     e.preventDefault();
     if (!sr.trim() || ruVariants.length === 0 || duplicate) return;
     const relatedToAdd = Object.entries(relatedSelections).map(([relSr, sel]) => ({ sr: relSr, ru: sel.ru }));
-    onAdd(sr, ruVariants.join(', '), example, relatedToAdd);
+    onAdd(sr, ruVariants.join(', '), example, relatedToAdd, selectedTagNames);
     setSr('');
     setRuVariants([]);
     setExample('');
@@ -1514,6 +1543,8 @@ function AddWord({ onAdd, goToList, words }) {
     setRelatedWords([]);
     setRelatedState('idle');
     setRelatedSelections({});
+    setSelectedTagNames([]);
+    setTagQuery('');
     setJustAdded(true);
     setTimeout(() => setJustAdded(false), 1600);
     srRef.current?.focus();
@@ -1711,6 +1742,81 @@ function AddWord({ onAdd, goToList, words }) {
       <p style={{ color: '#5C6690', fontSize: '0.75rem', marginBottom: 20 }}>
         На картици ће се рачунати тачним било који од ових превода.
       </p>
+
+      <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
+        ТАГОВИ (НЕОБАВЕЗНО)
+      </label>
+      <div className="mt-1.5 mb-1.5">
+        {selectedTagNames.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {selectedTagNames.map((name) => (
+              <span
+                key={name}
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                style={{ background: '#2A2410', color: '#D4A54A', fontSize: '0.72rem', fontFamily: FONT_MONO }}
+              >
+                {name}
+                <button
+                  type="button"
+                  onClick={() => removeTagName(name)}
+                  aria-label={`Уклони таг ${name}`}
+                  style={{ color: '#9C7E30', lineHeight: 1 }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <input
+          value={tagQuery}
+          onChange={(e) => setTagQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && tagQuery.trim()) {
+              e.preventDefault();
+              addTagName(tagQuery);
+            }
+          }}
+          placeholder="нпр. храна, глаголи…"
+          className="w-full rounded-lg px-3.5 py-2.5 outline-none"
+          style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
+        />
+        {(() => {
+          const q = tagQuery.trim().toLowerCase();
+          const candidates = (tags || [])
+            .filter((t) => !selectedTagNames.includes(t.name.toLowerCase()))
+            .filter((t) => !q || t.name.toLowerCase().includes(q))
+            .slice(0, 6);
+          const exactExists = (tags || []).some((t) => t.name.toLowerCase() === q);
+          if (candidates.length === 0 && (!q || exactExists)) return null;
+          return (
+            <div className="flex flex-col gap-1 mt-1.5">
+              {candidates.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => addTagName(t.name)}
+                  className="text-left rounded-md px-2.5 py-1.5"
+                  style={{ background: '#12192E', color: '#D4A54A', fontSize: '0.85rem' }}
+                >
+                  {t.name}
+                </button>
+              ))}
+              {q && !exactExists && (
+                <button
+                  type="button"
+                  onClick={() => addTagName(tagQuery)}
+                  className="text-left rounded-md px-2.5 py-1.5"
+                  style={{ background: '#12192E', color: '#7DC79A', fontSize: '0.85rem' }}
+                >
+                  + направи нови таг „{tagQuery.trim()}"
+                </button>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+      <div style={{ marginBottom: 20 }} />
 
       <div className="flex items-center justify-between mb-1.5">
         <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
