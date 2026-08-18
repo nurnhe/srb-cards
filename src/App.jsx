@@ -13,6 +13,8 @@ import {
   isPlausibleRussianText,
   suggestTagsFromRelatedWords,
   filterWordsByQuery,
+  isTypoCorrected,
+  findLikelyTypoOf,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -672,6 +674,7 @@ function Practice({ words, tags, onAnswer }) {
   const [current, setCurrent] = useState(null);
   const [input, setInput] = useState('');
   const [feedback, setFeedback] = useState(null); // null | 'correct' | 'wrong'
+  const [typoForgiven, setTypoForgiven] = useState(false);
   const [session, setSession] = useState({ correct: 0, total: 0 });
   const inputRef = useRef(null);
   // "deck" of word ids not yet shown in the current cycle, weighted toward
@@ -771,6 +774,7 @@ function Practice({ words, tags, onAnswer }) {
     if (!current || feedback) return;
     const isCorrect = isAnswerCorrect(direction, current, input);
     setFeedback(isCorrect ? 'correct' : 'wrong');
+    setTypoForgiven(isCorrect && isTypoCorrected(direction, current, input));
     setSession((s) => ({ correct: s.correct + (isCorrect ? 1 : 0), total: s.total + 1 }));
     onAnswer(current.id, isCorrect);
     if (!isCorrect) {
@@ -784,12 +788,14 @@ function Practice({ words, tags, onAnswer }) {
     setCurrent(drawNext(current?.id));
     setInput('');
     setFeedback(null);
+    setTypoForgiven(false);
   };
 
   const switchDirection = (dir) => {
     setDirection(dir);
     setInput('');
     setFeedback(null);
+    setTypoForgiven(false);
     setCurrent(drawNext(current?.id));
   };
 
@@ -913,6 +919,11 @@ function Practice({ words, tags, onAnswer }) {
                 {feedback === 'correct' ? 'Тачно!' : 'Није тачно'}
               </span>
             </div>
+            {feedback === 'correct' && typoForgiven && (
+              <div style={{ color: '#6B6455', fontSize: '0.8rem' }}>
+                (мали типфелер, прихваћено)
+              </div>
+            )}
             {feedback === 'wrong' && (
               <div style={{ color: '#6B6455', fontSize: '0.9rem' }}>
                 Тачан одговор:{' '}
@@ -1200,6 +1211,19 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
                   style={{ background: '#12192E', color: '#F5F1E8', border: '1px solid #3A4570' }}
                   placeholder="српски"
                 />
+                {(() => {
+                  const typoOf = findLikelyTypoOf(
+                    editSr,
+                    words.filter((x) => x.id !== w.id)
+                  );
+                  return (
+                    typoOf && (
+                      <p style={{ color: '#C9A24B', fontSize: '0.75rem' }}>
+                        Можда си мислио/ла на <span style={{ color: '#F5F1E8', fontWeight: 600 }}>{typoOf.sr}</span>?
+                      </p>
+                    )
+                  );
+                })()}
                 <VariantsEditor variants={editRuVariants} onChange={setEditRuVariants} srWord={editSr} />
                 <input
                   value={editExample}
@@ -1574,6 +1598,12 @@ function AddWord({ onAdd, goToList, words, tags }) {
   // Cyrillic and Latin spellings (typing either script should still catch
   // a duplicate stored in the other script).
   const duplicate = findDuplicateWord(sr, words);
+  // Softer signal than `duplicate` — a near-miss typo of an existing word,
+  // not an exact match. Only checked when it's not already an exact
+  // duplicate, and never blocks submission (this app's vocabulary is full
+  // of real words no external dictionary would recognize, so this is a
+  // "did you mean" nudge, not a validator).
+  const likelyTypoOf = !duplicate ? findLikelyTypoOf(sr, words) : null;
 
   // Tags already on related words the user picked to link — a low-effort
   // signal for "this new word probably belongs to the same category",
@@ -1718,6 +1748,12 @@ function AddWord({ onAdd, goToList, words, tags }) {
         <p style={{ color: '#E28B95', fontSize: '0.78rem', marginBottom: 12 }}>
           Ова реч већ постоји: <span style={{ color: '#F5F1E8', fontWeight: 600 }}>{duplicate.sr}</span> →{' '}
           {duplicate.ru}. Иди на картицу „Речи" да је уредиш уместо да правиш дупликат.
+        </p>
+      ) : likelyTypoOf ? (
+        <p style={{ color: '#C9A24B', fontSize: '0.78rem', marginBottom: 12 }}>
+          Можда си мислио/ла на{' '}
+          <span style={{ color: '#F5F1E8', fontWeight: 600 }}>{likelyTypoOf.sr}</span> ({likelyTypoOf.ru})? Ако је
+          ово стварно нова реч, слободно настави.
         </p>
       ) : otherScript(sr) ? (
         <p style={{ color: '#5C6690', fontSize: '0.78rem', marginBottom: 12 }}>
