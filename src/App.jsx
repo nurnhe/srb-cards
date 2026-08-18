@@ -349,10 +349,12 @@ export default function App() {
       .single();
     if (error || !data) {
       setStorageError(true);
-      return;
+      return null;
     }
     setStorageError(false);
-    setWords((prev) => [...prev, { ...data, relatedIds: [], tagIds: [] }]);
+    const withDefaults = { ...data, relatedIds: [], tagIds: [] };
+    setWords((prev) => [...prev, withDefaults]);
+    return withDefaults;
   }, []);
 
   const updateWord = useCallback(async (id, sr, ru, example) => {
@@ -432,6 +434,27 @@ export default function App() {
       })
     );
   }, []);
+
+  // Adds the main word, then any selected related words (e.g. picked from
+  // the Wiktionary related-words list) that have a translation filled in —
+  // reusing an existing dictionary entry instead of creating a duplicate
+  // where one already matches — and links each of them to the main word.
+  // relatedSelections: [{ sr, ru }]
+  const addWordWithRelated = useCallback(
+    async (sr, ru, example, relatedSelections) => {
+      const mainWord = await addWord(sr, ru, example);
+      if (!mainWord) return;
+      for (const rel of relatedSelections || []) {
+        if (!rel.ru || !rel.ru.trim()) continue;
+        const existing = findDuplicateWord(rel.sr, words);
+        const relatedWord = existing || (await addWord(rel.sr, rel.ru, null));
+        if (relatedWord && relatedWord.id !== mainWord.id) {
+          await linkWords(mainWord.id, relatedWord.id);
+        }
+      }
+    },
+    [addWord, linkWords, words]
+  );
 
   const unlinkWords = useCallback(async (idA, idB) => {
     const { error } = await supabase
@@ -539,7 +562,7 @@ export default function App() {
                 onUntag={untagWord}
               />
             )}
-            {tab === 'add' && <AddWord onAdd={addWord} goToList={() => setTab('words')} words={words} />}
+            {tab === 'add' && <AddWord onAdd={addWordWithRelated} goToList={() => setTab('words')} words={words} />}
           </>
         )}
 
@@ -1445,6 +1468,9 @@ function AddWord({ onAdd, goToList, words }) {
   const [lookupState, setLookupState] = useState('idle'); // idle | loading | notfound | error
   const [relatedWords, setRelatedWords] = useState([]);
   const [relatedState, setRelatedState] = useState('idle'); // idle | loading | notfound | error
+  // Related words the user has picked to also add to the dictionary —
+  // { [word]: { ru: string, status: 'loading' | 'idle' } }
+  const [relatedSelections, setRelatedSelections] = useState({});
   const srRef = useRef(null);
 
   // Matches an entered sr word against existing words, accounting for both
@@ -1452,16 +1478,42 @@ function AddWord({ onAdd, goToList, words }) {
   // a duplicate stored in the other script).
   const duplicate = findDuplicateWord(sr, words);
 
+  const toggleRelatedSelection = async (word) => {
+    setRelatedSelections((prev) => {
+      if (prev[word]) {
+        const next = { ...prev };
+        delete next[word];
+        return next;
+      }
+      return { ...prev, [word]: { ru: '', status: 'loading' } };
+    });
+    if (relatedSelections[word]) return; // was selected — just deselected above
+    try {
+      const suggestions = await fetchTranslationSuggestions(word);
+      setRelatedSelections((prev) =>
+        prev[word] ? { ...prev, [word]: { ru: suggestions[0] || '', status: 'idle' } } : prev
+      );
+    } catch (e) {
+      setRelatedSelections((prev) => (prev[word] ? { ...prev, [word]: { ru: '', status: 'idle' } } : prev));
+    }
+  };
+
+  const setRelatedTranslation = (word, ru) => {
+    setRelatedSelections((prev) => (prev[word] ? { ...prev, [word]: { ...prev[word], ru } } : prev));
+  };
+
   const submit = (e) => {
     e.preventDefault();
     if (!sr.trim() || ruVariants.length === 0 || duplicate) return;
-    onAdd(sr, ruVariants.join(', '), example);
+    const relatedToAdd = Object.entries(relatedSelections).map(([relSr, sel]) => ({ sr: relSr, ru: sel.ru }));
+    onAdd(sr, ruVariants.join(', '), example, relatedToAdd);
     setSr('');
     setRuVariants([]);
     setExample('');
     setLookupState('idle');
     setRelatedWords([]);
     setRelatedState('idle');
+    setRelatedSelections({});
     setJustAdded(true);
     setTimeout(() => setJustAdded(false), 1600);
     srRef.current?.focus();
@@ -1522,6 +1574,7 @@ function AddWord({ onAdd, goToList, words }) {
           // previous word can't be mistaken for this one's
           setRelatedWords([]);
           setRelatedState('idle');
+          setRelatedSelections({});
         }}
         placeholder="нпр. хвала"
         className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-1.5 outline-none"
@@ -1567,17 +1620,65 @@ function AddWord({ onAdd, goToList, words }) {
         </button>
       </div>
       {relatedWords.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-1.5">
-          {relatedWords.map((w) => (
-            <span
-              key={w}
-              className="inline-flex items-center rounded-full px-2.5 py-1"
-              style={{ background: '#12192E', border: '1px solid #2A3355', color: '#8892AE', fontSize: '0.8rem' }}
-            >
-              {w}
-            </span>
-          ))}
-        </div>
+        <>
+          <p style={{ color: '#5C6690', fontSize: '0.72rem', marginBottom: 6 }}>
+            Кликни на реч да је и њу додаш у речник:
+          </p>
+          <div className="flex flex-wrap gap-1.5 mb-1.5">
+            {relatedWords.map((w) => {
+              const selected = !!relatedSelections[w];
+              const alreadyInDict = findDuplicateWord(w, words);
+              return (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => toggleRelatedSelection(w)}
+                  className="inline-flex items-center gap-1 rounded-full px-2.5 py-1"
+                  style={{
+                    background: selected ? '#D4A54A' : '#12192E',
+                    border: `1px solid ${selected ? '#D4A54A' : '#2A3355'}`,
+                    color: selected ? '#1C2333' : '#8892AE',
+                    fontSize: '0.8rem',
+                    fontWeight: selected ? 600 : 400,
+                  }}
+                  title={alreadyInDict ? 'Већ постоји у речнику — биће само повезана' : undefined}
+                >
+                  {selected && <Check size={11} />}
+                  {w}
+                  {alreadyInDict && !selected && (
+                    <span style={{ color: '#5C6690', fontSize: '0.68rem' }}>•у речнику</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {Object.keys(relatedSelections).length > 0 && (
+            <div className="flex flex-col gap-1.5 mb-1.5">
+              {Object.entries(relatedSelections).map(([relSr, sel]) => (
+                <div key={relSr} className="flex items-center gap-2">
+                  <span style={{ color: '#F5F1E8', fontSize: '0.82rem', minWidth: 90 }}>{relSr}</span>
+                  <span style={{ color: '#5C6690' }}>→</span>
+                  {sel.status === 'loading' ? (
+                    <span style={{ color: '#5C6690', fontSize: '0.78rem' }} className="flex items-center gap-1.5">
+                      <Loader2 size={12} className="animate-spin" /> тражим превод…
+                    </span>
+                  ) : (
+                    <input
+                      value={sel.ru}
+                      onChange={(e) => setRelatedTranslation(relSr, e.target.value)}
+                      placeholder="превод (обавезно да би се додало)"
+                      className="rounded-md px-2.5 py-1 outline-none flex-1"
+                      style={{ fontSize: '0.82rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
+                    />
+                  )}
+                </div>
+              ))}
+              <p style={{ color: '#5C6690', fontSize: '0.7rem' }}>
+                Означене речи без превода неће бити додате — упиши превод ручно ако ништа није пронађено.
+              </p>
+            </div>
+          )}
+        </>
       )}
       {relatedState === 'notfound' && (
         <p style={{ color: '#8892AE', fontSize: '0.72rem', marginBottom: 8 }}>
