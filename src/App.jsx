@@ -1508,15 +1508,23 @@ function AddWord({ onAdd, goToList, words, tags }) {
   const duplicate = findDuplicateWord(sr, words);
 
   const toggleRelatedSelection = async (word) => {
+    // A word already in the dictionary doesn't need a translation lookup —
+    // it already has one, and will just be linked rather than created.
+    const existing = findDuplicateWord(word, words);
+    let wasAlreadySelected = false;
     setRelatedSelections((prev) => {
       if (prev[word]) {
+        wasAlreadySelected = true;
         const next = { ...prev };
         delete next[word];
         return next;
       }
+      if (existing) {
+        return { ...prev, [word]: { ru: existing.ru, status: 'idle', alreadyExists: true } };
+      }
       return { ...prev, [word]: { ru: '', status: 'loading' } };
     });
-    if (relatedSelections[word]) return; // was selected — just deselected above
+    if (wasAlreadySelected || existing) return;
     try {
       const suggestions = await fetchTranslationSuggestions(word);
       setRelatedSelections((prev) =>
@@ -1558,13 +1566,23 @@ function AddWord({ onAdd, goToList, words, tags }) {
       if (found) {
         setRelatedWords(found);
         setRelatedState('idle');
+        // Related words already in the dictionary are auto-selected for
+        // linking — no click or translation needed, they already have one.
+        const autoIncluded = {};
+        found.forEach((w) => {
+          const existing = findDuplicateWord(w, words);
+          if (existing) autoIncluded[w] = { ru: existing.ru, status: 'idle', alreadyExists: true };
+        });
+        setRelatedSelections(autoIncluded);
       } else {
         setRelatedWords([]);
         setRelatedState('notfound');
+        setRelatedSelections({});
       }
     } catch (e) {
       setRelatedWords([]);
       setRelatedState('error');
+      setRelatedSelections({});
     }
   };
 
@@ -1653,7 +1671,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
       {relatedWords.length > 0 && (
         <>
           <p style={{ color: '#5C6690', fontSize: '0.72rem', marginBottom: 6 }}>
-            Кликни на реч да је и њу додаш у речник:
+            Речи које већ постоје у речнику биће аутоматски повезане. Кликни на остале да их и њих додаш:
           </p>
           <div className="flex flex-wrap gap-1.5 mb-1.5">
             {relatedWords.map((w) => {
@@ -1672,12 +1690,18 @@ function AddWord({ onAdd, goToList, words, tags }) {
                     fontSize: '0.8rem',
                     fontWeight: selected ? 600 : 400,
                   }}
-                  title={alreadyInDict ? 'Већ постоји у речнику — биће само повезана' : undefined}
+                  title={
+                    alreadyInDict
+                      ? 'Већ постоји у речнику — биће аутоматски повезана (клик да откажеш)'
+                      : undefined
+                  }
                 >
                   {selected && <Check size={11} />}
                   {w}
-                  {alreadyInDict && !selected && (
-                    <span style={{ color: '#5C6690', fontSize: '0.68rem' }}>•у речнику</span>
+                  {alreadyInDict && (
+                    <span style={{ color: selected ? '#5c4a1f' : '#5C6690', fontSize: '0.68rem' }}>
+                      • у речнику
+                    </span>
                   )}
                 </button>
               );
@@ -1689,7 +1713,12 @@ function AddWord({ onAdd, goToList, words, tags }) {
                 <div key={relSr} className="flex items-center gap-2">
                   <span style={{ color: '#F5F1E8', fontSize: '0.82rem', minWidth: 90 }}>{relSr}</span>
                   <span style={{ color: '#5C6690' }}>→</span>
-                  {sel.status === 'loading' ? (
+                  {sel.alreadyExists ? (
+                    <span style={{ color: '#8892AE', fontSize: '0.82rem' }}>
+                      {sel.ru}{' '}
+                      <span style={{ color: '#5C6690', fontSize: '0.7rem' }}>(већ у речнику — само повезивање)</span>
+                    </span>
+                  ) : sel.status === 'loading' ? (
                     <span style={{ color: '#5C6690', fontSize: '0.78rem' }} className="flex items-center gap-1.5">
                       <Loader2 size={12} className="animate-spin" /> тражим превод…
                     </span>
@@ -1705,7 +1734,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
                 </div>
               ))}
               <p style={{ color: '#5C6690', fontSize: '0.7rem' }}>
-                Означене речи без превода неће бити додате — упиши превод ручно ако ништа није пронађено.
+                Означене нове речи без превода неће бити додате — упиши превод ручно ако ништа није пронађено.
               </p>
             </div>
           )}
