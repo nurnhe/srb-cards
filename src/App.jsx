@@ -12,6 +12,7 @@ import {
   isRelevantTranslationMatch,
   isPlausibleRussianText,
   suggestTagsFromRelatedWords,
+  filterWordsByQuery,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -1042,6 +1043,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
   const [tagQuery, setTagQuery] = useState('');
   const [activeTagFilter, setActiveTagFilter] = useState(new Set()); // Set of tag ids; empty = all
   const [sortMode, setSortMode] = useState('alpha'); // alpha | hardest
+  const [searchQuery, setSearchQuery] = useState('');
 
   if (words.length === 0) {
     return (
@@ -1079,6 +1081,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     activeTagFilter.size > 0
       ? sorted.filter((w) => Array.from(activeTagFilter).every((id) => w.tagIds.includes(id)))
       : sorted;
+  const searched = filterWordsByQuery(filtered, searchQuery);
   const byId = Object.fromEntries(words.map((w) => [w.id, w]));
   const tagById = Object.fromEntries((tags || []).map((t) => [t.id, t]));
 
@@ -1135,6 +1138,20 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
         </div>
       </div>
 
+      <input
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder="претражи по српском или руском…"
+        className="w-full rounded-lg px-3.5 py-2.5 mb-1 outline-none"
+        style={{
+          fontFamily: FONT_DISPLAY,
+          fontSize: '0.95rem',
+          background: '#F5F1E8',
+          color: '#1C2333',
+          border: '1.5px solid transparent',
+        }}
+      />
+
       {tags && tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-1" style={{ paddingLeft: 4 }}>
           <TagFilterPill
@@ -1160,13 +1177,13 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
         </div>
       )}
 
-      {filtered.length === 0 && (
+      {searched.length === 0 && (
         <div style={{ color: '#5C6690', fontSize: '0.85rem', padding: '20px 4px' }}>
-          Нема речи са овим тагом.
+          {searchQuery.trim() ? `Нема речи за „${searchQuery.trim()}“.` : 'Нема речи са овим тагом.'}
         </div>
       )}
 
-      {filtered.map((w) => {
+      {searched.map((w) => {
         const related = w.relatedIds.map((rid) => byId[rid]).filter(Boolean);
         return (
           <div

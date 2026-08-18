@@ -226,6 +226,18 @@ export function suggestTagsFromRelatedWords(relatedSrList, words, tags, excludeT
   return suggestions;
 }
 
+// Filters words for the Words-list search box — matches if the query is a
+// substring of the sr word (either script) or the ru translation text. An
+// empty/whitespace query matches everything.
+export function filterWordsByQuery(words, query) {
+  const q = normalize(query || '');
+  if (!q) return words || [];
+  return (words || []).filter((w) => {
+    const haystacks = [w.sr, otherScript(w.sr), w.ru].filter(Boolean).map(normalize);
+    return haystacks.some((h) => h.includes(q));
+  });
+}
+
 // Checks a typed practice answer against the current card, accepting either
 // script for sr-direction answers and any saved translation variant for
 // ru-direction answers.
