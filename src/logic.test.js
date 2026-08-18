@@ -14,6 +14,7 @@ import {
   isAnswerCorrect,
   isRelevantTranslationMatch,
   isPlausibleRussianText,
+  suggestTagsFromRelatedWords,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -236,6 +237,50 @@ describe('findDuplicateWord', () => {
   it('returns null for empty input', () => {
     expect(findDuplicateWord('', words)).toBeNull();
     expect(findDuplicateWord('   ', words)).toBeNull();
+  });
+});
+
+describe('suggestTagsFromRelatedWords', () => {
+  const tags = [
+    { id: 't1', name: 'imenica' },
+    { id: 't2', name: 'kretanje' },
+    { id: 't3', name: 'glagol' },
+  ];
+  const words = [
+    { id: '1', sr: 'izlaz', tagIds: ['t1', 't2'] },
+    { id: '2', sr: 'izlaziti', tagIds: ['t3', 't2'] },
+    { id: '3', sr: 'ulaz', tagIds: [] },
+  ];
+
+  it('collects tags from existing related words, deduped', () => {
+    expect(suggestTagsFromRelatedWords(['izlaz', 'izlaziti'], words, tags)).toEqual([
+      'imenica',
+      'kretanje',
+      'glagol',
+    ]);
+  });
+
+  it('excludes tags already selected for the new word', () => {
+    expect(suggestTagsFromRelatedWords(['izlaz', 'izlaziti'], words, tags, ['kretanje'])).toEqual([
+      'imenica',
+      'glagol',
+    ]);
+  });
+
+  it('ignores related words not yet in the dictionary', () => {
+    expect(suggestTagsFromRelatedWords(['nova-rec'], words, tags)).toEqual([]);
+  });
+
+  it('ignores related words with no tags', () => {
+    expect(suggestTagsFromRelatedWords(['ulaz'], words, tags)).toEqual([]);
+  });
+
+  it('matches related words typed in the other script', () => {
+    expect(suggestTagsFromRelatedWords(['излаз'], words, tags)).toEqual(['imenica', 'kretanje']);
+  });
+
+  it('returns an empty array when nothing is selected', () => {
+    expect(suggestTagsFromRelatedWords([], words, tags)).toEqual([]);
   });
 });
 

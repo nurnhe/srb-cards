@@ -11,6 +11,7 @@ import {
   isAnswerCorrect,
   isRelevantTranslationMatch,
   isPlausibleRussianText,
+  suggestTagsFromRelatedWords,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -1557,6 +1558,16 @@ function AddWord({ onAdd, goToList, words, tags }) {
   // a duplicate stored in the other script).
   const duplicate = findDuplicateWord(sr, words);
 
+  // Tags already on related words the user picked to link — a low-effort
+  // signal for "this new word probably belongs to the same category",
+  // without needing any new lookup or API.
+  const suggestedTagNames = suggestTagsFromRelatedWords(
+    Object.keys(relatedSelections),
+    words,
+    tags,
+    selectedTagNames
+  );
+
   const toggleRelatedSelection = async (word) => {
     // A word already in the dictionary doesn't need a translation lookup —
     // it already has one, and will just be linked rather than created.
@@ -1879,6 +1890,23 @@ function AddWord({ onAdd, goToList, words, tags }) {
                   </div>
                 )}
               </div>
+            ))}
+          </div>
+        )}
+        {suggestedTagNames.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-2">
+            <span style={{ color: '#5C6690', fontSize: '0.7rem' }}>предлог из повезаних речи:</span>
+            {suggestedTagNames.map((name) => (
+              <button
+                key={name}
+                type="button"
+                onClick={() => addTagName(name)}
+                className="inline-flex items-center gap-1 rounded-full px-2.5 py-1"
+                style={{ background: '#12192E', border: '1px solid #2A3355', color: '#D4A54A', fontSize: '0.78rem' }}
+              >
+                <Plus size={11} />
+                {name}
+              </button>
             ))}
           </div>
         )}
