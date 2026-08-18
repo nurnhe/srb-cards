@@ -437,21 +437,28 @@ export default function App() {
 
   // Adds the main word, then any selected related words (e.g. picked from
   // the Wiktionary related-words list) — reusing an existing dictionary
-  // entry instead of creating a duplicate where one already matches — and
-  // links each of them to the main word. A translation is only required
-  // for words that need to be *created*; a word that already exists just
-  // gets linked, using its existing translation.
+  // entry instead of creating a duplicate where one already matches. A
+  // translation is only required for words that need to be *created*; a
+  // word that already exists just gets linked, using its existing
+  // translation. Every word in the resulting group (main word + all
+  // related words) is linked to every other one — a whole word family
+  // added together should be mutually connected, not just each related
+  // word linked back to the main word alone.
   // relatedSelections: [{ sr, ru }]
   const addWordWithRelated = useCallback(
     async (sr, ru, example, relatedSelections) => {
       const mainWord = await addWord(sr, ru, example);
       if (!mainWord) return;
+      const group = [mainWord];
       for (const rel of relatedSelections || []) {
         const existing = findDuplicateWord(rel.sr, words);
         if (!existing && (!rel.ru || !rel.ru.trim())) continue;
         const relatedWord = existing || (await addWord(rel.sr, rel.ru, null));
-        if (relatedWord && relatedWord.id !== mainWord.id) {
-          await linkWords(mainWord.id, relatedWord.id);
+        if (relatedWord) group.push(relatedWord);
+      }
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          await linkWords(group[i].id, group[j].id);
         }
       }
     },
