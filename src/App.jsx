@@ -505,28 +505,36 @@ export default function App() {
   // translation. Every word in the resulting group (main word + all
   // related words) is linked to every other one — a whole word family
   // added together should be mutually connected, not just each related
-  // word linked back to the main word alone. Any selected tags are
-  // applied to the main word only (tags picked while adding this word
-  // describe this word, not automatically its related words).
-  // relatedSelections: [{ sr, ru }], tagNames: [string]
+  // word linked back to the main word alone. Selected tags are applied to
+  // whichever words in the group were opted in (each related word carries
+  // its own `applyTags` flag; the main word's inclusion is controlled by
+  // applyTagsToMain) — not silently just the main word, since a tag can
+  // legitimately describe the whole word family (e.g. "verbs").
+  // relatedSelections: [{ sr, ru, applyTags }], tagNames: [string]
   const addWordWithRelated = useCallback(
-    async (sr, ru, example, relatedSelections, tagNames) => {
+    async (sr, ru, example, relatedSelections, tagNames, applyTagsToMain = true) => {
       const mainWord = await addWord(sr, ru, example);
       if (!mainWord) return;
       const group = [mainWord];
+      const tagTargets = applyTagsToMain ? [mainWord] : [];
       for (const rel of relatedSelections || []) {
         const existing = findDuplicateWord(rel.sr, words);
         if (!existing && (!rel.ru || !rel.ru.trim())) continue;
         const relatedWord = existing || (await addWord(rel.sr, rel.ru, null));
-        if (relatedWord) group.push(relatedWord);
+        if (relatedWord) {
+          group.push(relatedWord);
+          if (rel.applyTags) tagTargets.push(relatedWord);
+        }
       }
       for (let i = 0; i < group.length; i++) {
         for (let j = i + 1; j < group.length; j++) {
           await linkWords(group[i].id, group[j].id);
         }
       }
-      for (const name of tagNames || []) {
-        await tagWord(mainWord.id, name);
+      for (const target of tagTargets) {
+        for (const name of tagNames || []) {
+          await tagWord(target.id, name);
+        }
       }
     },
     [addWord, linkWords, tagWord, words]
@@ -1489,6 +1497,11 @@ function AddWord({ onAdd, goToList, words, tags }) {
   const [relatedSelections, setRelatedSelections] = useState({});
   const [selectedTagNames, setSelectedTagNames] = useState([]);
   const [tagQuery, setTagQuery] = useState('');
+  // Which words (by sr, or '__main__' for the word being added) are
+  // explicitly excluded from getting the selected tags — everything not
+  // in this set is included by default, so tags apply to the whole
+  // group (main word + related words) unless opted out.
+  const [tagExclusions, setTagExclusions] = useState(new Set());
   const srRef = useRef(null);
 
   const addTagName = (name) => {
@@ -1500,6 +1513,15 @@ function AddWord({ onAdd, goToList, words, tags }) {
 
   const removeTagName = (name) => {
     setSelectedTagNames((prev) => prev.filter((t) => t !== name));
+  };
+
+  const toggleTagTarget = (key) => {
+    setTagExclusions((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
 
   // Matches an entered sr word against existing words, accounting for both
@@ -1542,8 +1564,13 @@ function AddWord({ onAdd, goToList, words, tags }) {
   const submit = (e) => {
     e.preventDefault();
     if (!sr.trim() || ruVariants.length === 0 || duplicate) return;
-    const relatedToAdd = Object.entries(relatedSelections).map(([relSr, sel]) => ({ sr: relSr, ru: sel.ru }));
-    onAdd(sr, ruVariants.join(', '), example, relatedToAdd, selectedTagNames);
+    const relatedToAdd = Object.entries(relatedSelections).map(([relSr, sel]) => ({
+      sr: relSr,
+      ru: sel.ru,
+      applyTags: !tagExclusions.has(relSr),
+    }));
+    const applyTagsToMain = !tagExclusions.has('__main__');
+    onAdd(sr, ruVariants.join(', '), example, relatedToAdd, selectedTagNames, applyTagsToMain);
     setSr('');
     setRuVariants([]);
     setExample('');
@@ -1553,6 +1580,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
     setRelatedSelections({});
     setSelectedTagNames([]);
     setTagQuery('');
+    setTagExclusions(new Set());
     setJustAdded(true);
     setTimeout(() => setJustAdded(false), 1600);
     srRef.current?.focus();
@@ -1624,6 +1652,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
           setRelatedWords([]);
           setRelatedState('idle');
           setRelatedSelections({});
+          setTagExclusions(new Set());
         }}
         placeholder="нпр. хвала"
         className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-1.5 outline-none"
@@ -1844,6 +1873,35 @@ function AddWord({ onAdd, goToList, words, tags }) {
             </div>
           );
         })()}
+        {selectedTagNames.length > 0 && Object.keys(relatedSelections).length > 0 && (
+          <div className="mt-3 pt-3" style={{ borderTop: '1px solid #2A3355' }}>
+            <p style={{ color: '#8892AE', fontSize: '0.75rem', marginBottom: 6 }}>
+              Тагови ће бити примењени на (откачи да искључиш):
+            </p>
+            <label className="flex items-center gap-2 mb-1" style={{ fontSize: '0.85rem', color: '#F5F1E8' }}>
+              <input
+                type="checkbox"
+                checked={!tagExclusions.has('__main__')}
+                onChange={() => toggleTagTarget('__main__')}
+              />
+              {sr.trim()}
+            </label>
+            {Object.keys(relatedSelections).map((relSr) => (
+              <label
+                key={relSr}
+                className="flex items-center gap-2 mb-1"
+                style={{ fontSize: '0.85rem', color: '#F5F1E8' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={!tagExclusions.has(relSr)}
+                  onChange={() => toggleTagTarget(relSr)}
+                />
+                {relSr}
+              </label>
+            ))}
+          </div>
+        )}
       </div>
       <div style={{ marginBottom: 20 }} />
 
