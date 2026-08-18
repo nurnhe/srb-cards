@@ -283,6 +283,27 @@ describe('suggestTagsFromRelatedWords', () => {
   it('returns an empty array when nothing is selected', () => {
     expect(suggestTagsFromRelatedWords([], words, tags)).toEqual([]);
   });
+
+  it('excludes tags case-insensitively', () => {
+    expect(suggestTagsFromRelatedWords(['izlaz'], words, tags, ['Imenica', 'KRETANJE'])).toEqual([]);
+  });
+
+  it('skips a tagId with no matching tag (e.g. a deleted tag)', () => {
+    const wordsWithOrphanTag = [{ id: '4', sr: 'radnja', tagIds: ['t1', 'does-not-exist'] }];
+    expect(suggestTagsFromRelatedWords(['radnja'], wordsWithOrphanTag, tags)).toEqual(['imenica']);
+  });
+
+  it('does not duplicate a tag when the same related word is listed twice', () => {
+    expect(suggestTagsFromRelatedWords(['izlaz', 'izlaz'], words, tags)).toEqual(['imenica', 'kretanje']);
+  });
+
+  it('handles a missing tags list without throwing', () => {
+    expect(suggestTagsFromRelatedWords(['izlaz'], words, null)).toEqual([]);
+  });
+
+  it('handles a missing words list without throwing', () => {
+    expect(suggestTagsFromRelatedWords(['izlaz'], null, tags)).toEqual([]);
+  });
 });
 
 describe('filterWordsByQuery', () => {
