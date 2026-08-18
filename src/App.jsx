@@ -1212,10 +1212,13 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
                   placeholder="српски"
                 />
                 {(() => {
-                  const typoOf = findLikelyTypoOf(
-                    editSr,
-                    words.filter((x) => x.id !== w.id)
-                  );
+                  // Compare against the full word list, including this
+                  // word's own original spelling — editing "bakar" into
+                  // "bokar" should catch the typo against bakar itself,
+                  // not just against other, unrelated words. Only skip
+                  // when nothing has actually changed yet.
+                  if (normalize(editSr) === normalize(w.sr)) return null;
+                  const typoOf = findLikelyTypoOf(editSr, words);
                   return (
                     typoOf && (
                       <p style={{ color: '#C9A24B', fontSize: '0.75rem' }}>
