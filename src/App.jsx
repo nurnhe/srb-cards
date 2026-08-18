@@ -435,27 +435,6 @@ export default function App() {
     );
   }, []);
 
-  // Adds the main word, then any selected related words (e.g. picked from
-  // the Wiktionary related-words list) that have a translation filled in —
-  // reusing an existing dictionary entry instead of creating a duplicate
-  // where one already matches — and links each of them to the main word.
-  // relatedSelections: [{ sr, ru }]
-  const addWordWithRelated = useCallback(
-    async (sr, ru, example, relatedSelections) => {
-      const mainWord = await addWord(sr, ru, example);
-      if (!mainWord) return;
-      for (const rel of relatedSelections || []) {
-        if (!rel.ru || !rel.ru.trim()) continue;
-        const existing = findDuplicateWord(rel.sr, words);
-        const relatedWord = existing || (await addWord(rel.sr, rel.ru, null));
-        if (relatedWord && relatedWord.id !== mainWord.id) {
-          await linkWords(mainWord.id, relatedWord.id);
-        }
-      }
-    },
-    [addWord, linkWords, words]
-  );
-
   const unlinkWords = useCallback(async (idA, idB) => {
     const { error } = await supabase
       .from('word_links')
@@ -518,6 +497,52 @@ export default function App() {
     [ensureTag]
   );
 
+  // Adds the main word, then any selected related words (e.g. picked from
+  // the Wiktionary related-words list) — reusing an existing dictionary
+  // entry instead of creating a duplicate where one already matches. A
+  // translation is only required for words that need to be *created*; a
+  // word that already exists just gets linked, using its existing
+  // translation. Every word in the resulting group (main word + all
+  // related words) is linked to every other one — a whole word family
+  // added together should be mutually connected, not just each related
+  // word linked back to the main word alone. Each tag has its own list of
+  // which words in the group it applies to — different tags picked in
+  // the same add can go to different subsets of the words, since e.g.
+  // "verbs" might apply to the whole family while a more specific tag
+  // only fits one of them.
+  // relatedSelections: [{ sr, ru, tagNames: string[] }], mainTagNames: [string]
+  const addWordWithRelated = useCallback(
+    async (sr, ru, example, relatedSelections, mainTagNames) => {
+      const mainWord = await addWord(sr, ru, example);
+      if (!mainWord) return;
+      const group = [mainWord];
+      const relatedWithTags = [];
+      for (const rel of relatedSelections || []) {
+        const existing = findDuplicateWord(rel.sr, words);
+        if (!existing && (!rel.ru || !rel.ru.trim())) continue;
+        const relatedWord = existing || (await addWord(rel.sr, rel.ru, null));
+        if (relatedWord) {
+          group.push(relatedWord);
+          relatedWithTags.push({ word: relatedWord, tagNames: rel.tagNames || [] });
+        }
+      }
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          await linkWords(group[i].id, group[j].id);
+        }
+      }
+      for (const name of mainTagNames || []) {
+        await tagWord(mainWord.id, name);
+      }
+      for (const { word, tagNames } of relatedWithTags) {
+        for (const name of tagNames) {
+          await tagWord(word.id, name);
+        }
+      }
+    },
+    [addWord, linkWords, tagWord, words]
+  );
+
   const untagWord = useCallback(async (wordId, tagId) => {
     const { error } = await supabase
       .from('word_tags')
@@ -562,7 +587,9 @@ export default function App() {
                 onUntag={untagWord}
               />
             )}
-            {tab === 'add' && <AddWord onAdd={addWordWithRelated} goToList={() => setTab('words')} words={words} />}
+            {tab === 'add' && (
+              <AddWord onAdd={addWordWithRelated} goToList={() => setTab('words')} words={words} tags={tags} />
+            )}
           </>
         )}
 
@@ -639,7 +666,7 @@ function TabBar({ tab, setTab, count }) {
 
 function Practice({ words, tags, onAnswer }) {
   const [direction, setDirection] = useState('sr-ru'); // sr-ru: show SR, ask RU
-  const [tagFilter, setTagFilter] = useState(null);
+  const [tagFilter, setTagFilter] = useState(new Set()); // Set of tag ids; empty = all
   const [current, setCurrent] = useState(null);
   const [input, setInput] = useState('');
   const [feedback, setFeedback] = useState(null); // null | 'correct' | 'wrong'
@@ -649,7 +676,10 @@ function Practice({ words, tags, onAnswer }) {
   // words with more wrong answers — see buildWeightedDeck.
   const deckRef = useRef([]);
 
-  const pool = tagFilter ? words.filter((w) => w.tagIds.includes(tagFilter)) : words;
+  // A word must have ALL selected tags (intersection), not just any one
+  // of them — selecting more tags narrows the pool.
+  const pool =
+    tagFilter.size > 0 ? words.filter((w) => Array.from(tagFilter).every((id) => w.tagIds.includes(id))) : words;
 
   const drawNext = useCallback(
     (excludeId) => {
@@ -713,7 +743,7 @@ function Practice({ words, tags, onAnswer }) {
   // words exist but the deck hasn't drawn a first card yet (happens for one
   // render right after mount/word-list changes, before the effect runs)
   if (!current) {
-    if (pool.length === 0 && tagFilter) {
+    if (pool.length === 0 && tagFilter.size > 0) {
       return (
         <div>
           <TagScopeBar tags={tags} tagFilter={tagFilter} onChange={setTagFilter} />
@@ -917,18 +947,21 @@ function Practice({ words, tags, onAnswer }) {
   );
 }
 
+// tagFilter is a Set of tag ids — a word matches only if it has ALL of
+// the selected tags, so checking multiple pills narrows the pool.
 function TagScopeBar({ tags, tagFilter, onChange }) {
   if (!tags || tags.length === 0) return null;
+  const toggle = (id) => {
+    const next = new Set(tagFilter);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onChange(next);
+  };
   return (
     <div className="flex flex-wrap justify-center gap-1.5 mb-4">
-      <TagFilterPill active={tagFilter === null} label="Све теме" onClick={() => onChange(null)} />
+      <TagFilterPill active={tagFilter.size === 0} label="Све теме" onClick={() => onChange(new Set())} />
       {tags.map((t) => (
-        <TagFilterPill
-          key={t.id}
-          active={tagFilter === t.id}
-          label={t.name}
-          onClick={() => onChange(tagFilter === t.id ? null : t.id)}
-        />
+        <TagFilterPill key={t.id} active={tagFilter.has(t.id)} label={t.name} onClick={() => toggle(t.id)} />
       ))}
     </div>
   );
@@ -1006,7 +1039,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
   const [linkQuery, setLinkQuery] = useState('');
   const [taggingId, setTaggingId] = useState(null); // word currently picking/creating a tag
   const [tagQuery, setTagQuery] = useState('');
-  const [activeTagFilter, setActiveTagFilter] = useState(null);
+  const [activeTagFilter, setActiveTagFilter] = useState(new Set()); // Set of tag ids; empty = all
   const [sortMode, setSortMode] = useState('alpha'); // alpha | hardest
 
   if (words.length === 0) {
@@ -1039,7 +1072,12 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     }
     return srCollator.compare(a.sr, b.sr);
   });
-  const filtered = activeTagFilter ? sorted.filter((w) => w.tagIds.includes(activeTagFilter)) : sorted;
+  // A word must have ALL selected tags (intersection), not just any one
+  // of them — selecting more tags narrows the list.
+  const filtered =
+    activeTagFilter.size > 0
+      ? sorted.filter((w) => Array.from(activeTagFilter).every((id) => w.tagIds.includes(id)))
+      : sorted;
   const byId = Object.fromEntries(words.map((w) => [w.id, w]));
   const tagById = Object.fromEntries((tags || []).map((t) => [t.id, t]));
 
@@ -1099,16 +1137,23 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
       {tags && tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-1" style={{ paddingLeft: 4 }}>
           <TagFilterPill
-            active={activeTagFilter === null}
+            active={activeTagFilter.size === 0}
             label="Све"
-            onClick={() => setActiveTagFilter(null)}
+            onClick={() => setActiveTagFilter(new Set())}
           />
           {tags.map((t) => (
             <TagFilterPill
               key={t.id}
-              active={activeTagFilter === t.id}
+              active={activeTagFilter.has(t.id)}
               label={t.name}
-              onClick={() => setActiveTagFilter(activeTagFilter === t.id ? null : t.id)}
+              onClick={() =>
+                setActiveTagFilter((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(t.id)) next.delete(t.id);
+                  else next.add(t.id);
+                  return next;
+                })
+              }
             />
           ))}
         </div>
@@ -1460,7 +1505,7 @@ function RelatedWordPicker({ word, allWords, query, onQueryChange, onPick, onCan
 
 /* ---------------- ADD WORD ---------------- */
 
-function AddWord({ onAdd, goToList, words }) {
+function AddWord({ onAdd, goToList, words, tags }) {
   const [sr, setSr] = useState('');
   const [ruVariants, setRuVariants] = useState([]);
   const [example, setExample] = useState('');
@@ -1471,7 +1516,41 @@ function AddWord({ onAdd, goToList, words }) {
   // Related words the user has picked to also add to the dictionary —
   // { [word]: { ru: string, status: 'loading' | 'idle' } }
   const [relatedSelections, setRelatedSelections] = useState({});
+  const [selectedTagNames, setSelectedTagNames] = useState([]);
+  const [tagQuery, setTagQuery] = useState('');
+  // Per-tag: which words (by sr, or '__main__' for the word being added)
+  // are explicitly excluded from that specific tag — everything not in a
+  // tag's set is included by default, so each tag applies to the whole
+  // group (main word + related words) unless opted out, and different
+  // tags can apply to different subsets. { [tagName]: Set<key> }
+  const [tagExclusions, setTagExclusions] = useState({});
   const srRef = useRef(null);
+
+  const addTagName = (name) => {
+    const clean = name.trim().toLowerCase();
+    if (!clean || selectedTagNames.includes(clean)) return;
+    setSelectedTagNames((prev) => [...prev, clean]);
+    setTagExclusions((prev) => ({ ...prev, [clean]: new Set() }));
+    setTagQuery('');
+  };
+
+  const removeTagName = (name) => {
+    setSelectedTagNames((prev) => prev.filter((t) => t !== name));
+    setTagExclusions((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  };
+
+  const toggleTagTarget = (tagName, key) => {
+    setTagExclusions((prev) => {
+      const set = new Set(prev[tagName]);
+      if (set.has(key)) set.delete(key);
+      else set.add(key);
+      return { ...prev, [tagName]: set };
+    });
+  };
 
   // Matches an entered sr word against existing words, accounting for both
   // Cyrillic and Latin spellings (typing either script should still catch
@@ -1479,15 +1558,23 @@ function AddWord({ onAdd, goToList, words }) {
   const duplicate = findDuplicateWord(sr, words);
 
   const toggleRelatedSelection = async (word) => {
+    // A word already in the dictionary doesn't need a translation lookup —
+    // it already has one, and will just be linked rather than created.
+    const existing = findDuplicateWord(word, words);
+    let wasAlreadySelected = false;
     setRelatedSelections((prev) => {
       if (prev[word]) {
+        wasAlreadySelected = true;
         const next = { ...prev };
         delete next[word];
         return next;
       }
+      if (existing) {
+        return { ...prev, [word]: { ru: existing.ru, status: 'idle', alreadyExists: true } };
+      }
       return { ...prev, [word]: { ru: '', status: 'loading' } };
     });
-    if (relatedSelections[word]) return; // was selected — just deselected above
+    if (wasAlreadySelected || existing) return;
     try {
       const suggestions = await fetchTranslationSuggestions(word);
       setRelatedSelections((prev) =>
@@ -1505,8 +1592,13 @@ function AddWord({ onAdd, goToList, words }) {
   const submit = (e) => {
     e.preventDefault();
     if (!sr.trim() || ruVariants.length === 0 || duplicate) return;
-    const relatedToAdd = Object.entries(relatedSelections).map(([relSr, sel]) => ({ sr: relSr, ru: sel.ru }));
-    onAdd(sr, ruVariants.join(', '), example, relatedToAdd);
+    const relatedToAdd = Object.entries(relatedSelections).map(([relSr, sel]) => ({
+      sr: relSr,
+      ru: sel.ru,
+      tagNames: selectedTagNames.filter((name) => !tagExclusions[name]?.has(relSr)),
+    }));
+    const mainTagNames = selectedTagNames.filter((name) => !tagExclusions[name]?.has('__main__'));
+    onAdd(sr, ruVariants.join(', '), example, relatedToAdd, mainTagNames);
     setSr('');
     setRuVariants([]);
     setExample('');
@@ -1514,6 +1606,9 @@ function AddWord({ onAdd, goToList, words }) {
     setRelatedWords([]);
     setRelatedState('idle');
     setRelatedSelections({});
+    setSelectedTagNames([]);
+    setTagQuery('');
+    setTagExclusions({});
     setJustAdded(true);
     setTimeout(() => setJustAdded(false), 1600);
     srRef.current?.focus();
@@ -1527,13 +1622,23 @@ function AddWord({ onAdd, goToList, words }) {
       if (found) {
         setRelatedWords(found);
         setRelatedState('idle');
+        // Related words already in the dictionary are auto-selected for
+        // linking — no click or translation needed, they already have one.
+        const autoIncluded = {};
+        found.forEach((w) => {
+          const existing = findDuplicateWord(w, words);
+          if (existing) autoIncluded[w] = { ru: existing.ru, status: 'idle', alreadyExists: true };
+        });
+        setRelatedSelections(autoIncluded);
       } else {
         setRelatedWords([]);
         setRelatedState('notfound');
+        setRelatedSelections({});
       }
     } catch (e) {
       setRelatedWords([]);
       setRelatedState('error');
+      setRelatedSelections({});
     }
   };
 
@@ -1575,6 +1680,7 @@ function AddWord({ onAdd, goToList, words }) {
           setRelatedWords([]);
           setRelatedState('idle');
           setRelatedSelections({});
+          setTagExclusions({});
         }}
         placeholder="нпр. хвала"
         className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-1.5 outline-none"
@@ -1622,7 +1728,7 @@ function AddWord({ onAdd, goToList, words }) {
       {relatedWords.length > 0 && (
         <>
           <p style={{ color: '#5C6690', fontSize: '0.72rem', marginBottom: 6 }}>
-            Кликни на реч да је и њу додаш у речник:
+            Речи које већ постоје у речнику биће аутоматски повезане. Кликни на остале да их и њих додаш:
           </p>
           <div className="flex flex-wrap gap-1.5 mb-1.5">
             {relatedWords.map((w) => {
@@ -1641,12 +1747,18 @@ function AddWord({ onAdd, goToList, words }) {
                     fontSize: '0.8rem',
                     fontWeight: selected ? 600 : 400,
                   }}
-                  title={alreadyInDict ? 'Већ постоји у речнику — биће само повезана' : undefined}
+                  title={
+                    alreadyInDict
+                      ? 'Већ постоји у речнику — биће аутоматски повезана (клик да откажеш)'
+                      : undefined
+                  }
                 >
                   {selected && <Check size={11} />}
                   {w}
-                  {alreadyInDict && !selected && (
-                    <span style={{ color: '#5C6690', fontSize: '0.68rem' }}>•у речнику</span>
+                  {alreadyInDict && (
+                    <span style={{ color: selected ? '#5c4a1f' : '#5C6690', fontSize: '0.68rem' }}>
+                      • у речнику
+                    </span>
                   )}
                 </button>
               );
@@ -1658,7 +1770,12 @@ function AddWord({ onAdd, goToList, words }) {
                 <div key={relSr} className="flex items-center gap-2">
                   <span style={{ color: '#F5F1E8', fontSize: '0.82rem', minWidth: 90 }}>{relSr}</span>
                   <span style={{ color: '#5C6690' }}>→</span>
-                  {sel.status === 'loading' ? (
+                  {sel.alreadyExists ? (
+                    <span style={{ color: '#8892AE', fontSize: '0.82rem' }}>
+                      {sel.ru}{' '}
+                      <span style={{ color: '#5C6690', fontSize: '0.7rem' }}>(већ у речнику — само повезивање)</span>
+                    </span>
+                  ) : sel.status === 'loading' ? (
                     <span style={{ color: '#5C6690', fontSize: '0.78rem' }} className="flex items-center gap-1.5">
                       <Loader2 size={12} className="animate-spin" /> тражим превод…
                     </span>
@@ -1674,7 +1791,7 @@ function AddWord({ onAdd, goToList, words }) {
                 </div>
               ))}
               <p style={{ color: '#5C6690', fontSize: '0.7rem' }}>
-                Означене речи без превода неће бити додате — упиши превод ручно ако ништа није пронађено.
+                Означене нове речи без превода неће бити додате — упиши превод ручно ако ништа није пронађено.
               </p>
             </div>
           )}
@@ -1711,6 +1828,109 @@ function AddWord({ onAdd, goToList, words }) {
       <p style={{ color: '#5C6690', fontSize: '0.75rem', marginBottom: 20 }}>
         На картици ће се рачунати тачним било који од ових превода.
       </p>
+
+      <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
+        ТАГОВИ (НЕОБАВЕЗНО)
+      </label>
+      <div className="mt-1.5 mb-1.5">
+        {selectedTagNames.length > 0 && (
+          <div className="flex flex-col gap-2 mb-2">
+            {selectedTagNames.map((name) => (
+              <div key={name}>
+                <span
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                  style={{ background: '#2A2410', color: '#D4A54A', fontSize: '0.72rem', fontFamily: FONT_MONO }}
+                >
+                  {name}
+                  <button
+                    type="button"
+                    onClick={() => removeTagName(name)}
+                    aria-label={`Уклони таг ${name}`}
+                    style={{ color: '#9C7E30', lineHeight: 1 }}
+                  >
+                    ×
+                  </button>
+                </span>
+                {Object.keys(relatedSelections).length > 0 && (
+                  <div className="flex flex-col gap-0.5 mt-1 ml-1 pl-2" style={{ borderLeft: '2px solid #2A3355' }}>
+                    <p style={{ color: '#5C6690', fontSize: '0.68rem' }}>примењује се на:</p>
+                    <label className="flex items-center gap-2" style={{ fontSize: '0.8rem', color: '#F5F1E8' }}>
+                      <input
+                        type="checkbox"
+                        checked={!tagExclusions[name]?.has('__main__')}
+                        onChange={() => toggleTagTarget(name, '__main__')}
+                      />
+                      {sr.trim()}
+                    </label>
+                    {Object.keys(relatedSelections).map((relSr) => (
+                      <label
+                        key={relSr}
+                        className="flex items-center gap-2"
+                        style={{ fontSize: '0.8rem', color: '#F5F1E8' }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!tagExclusions[name]?.has(relSr)}
+                          onChange={() => toggleTagTarget(name, relSr)}
+                        />
+                        {relSr}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <input
+          value={tagQuery}
+          onChange={(e) => setTagQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && tagQuery.trim()) {
+              e.preventDefault();
+              addTagName(tagQuery);
+            }
+          }}
+          placeholder="нпр. храна, глаголи…"
+          className="w-full rounded-lg px-3.5 py-2.5 outline-none"
+          style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
+        />
+        {(() => {
+          const q = tagQuery.trim().toLowerCase();
+          const candidates = (tags || [])
+            .filter((t) => !selectedTagNames.includes(t.name.toLowerCase()))
+            .filter((t) => !q || t.name.toLowerCase().includes(q))
+            .slice(0, 6);
+          const exactExists = (tags || []).some((t) => t.name.toLowerCase() === q);
+          if (candidates.length === 0 && (!q || exactExists)) return null;
+          return (
+            <div className="flex flex-col gap-1 mt-1.5">
+              {candidates.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => addTagName(t.name)}
+                  className="text-left rounded-md px-2.5 py-1.5"
+                  style={{ background: '#12192E', color: '#D4A54A', fontSize: '0.85rem' }}
+                >
+                  {t.name}
+                </button>
+              ))}
+              {q && !exactExists && (
+                <button
+                  type="button"
+                  onClick={() => addTagName(tagQuery)}
+                  className="text-left rounded-md px-2.5 py-1.5"
+                  style={{ background: '#12192E', color: '#7DC79A', fontSize: '0.85rem' }}
+                >
+                  + направи нови таг „{tagQuery.trim()}"
+                </button>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+      <div style={{ marginBottom: 20 }} />
 
       <div className="flex items-center justify-between mb-1.5">
         <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
