@@ -77,6 +77,46 @@ async function fetchExample(srWord) {
   return null;
 }
 
+// Best-effort lookup of related/derived words from English Wiktionary —
+// Serbian is filed there under the merged "Serbo-Croatian" (sh) language
+// section. CORS-enabled, no backend needed. Returns null if the word
+// isn't found there at all, or has no Serbo-Croatian section, or has no
+// related/derived terms listed — all expected fairly often, not a bug.
+async function fetchRelatedWordsFromWiktionary(srWord) {
+  const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const heading = doc.getElementById('Serbo-Croatian');
+  const section = heading?.closest('section');
+  if (!section) return null;
+
+  const terms = [];
+  const seen = new Set();
+  // ids get a "_2", "_3" suffix etc. when a word has multiple
+  // etymologies/senses, each with their own Related/Derived terms list
+  section.querySelectorAll('[id^="Related_terms"], [id^="Derived_terms"]').forEach((h) => {
+    const list = h.parentElement?.querySelector('ul');
+    (list ? Array.from(list.querySelectorAll('li')) : []).forEach((li) => {
+      // The link's `title` attribute holds the plain spelling (e.g.
+      // "doraditi"); the visible text carries pitch-accent marks (e.g.
+      // "doráditi") that aren't used in normal typing, and some entries
+      // have a trailing aspect abbreviation (e.g. "pf") as a sibling
+      // element that li.textContent would otherwise pick up too.
+      li.querySelectorAll('a[title]').forEach((a) => {
+        const text = a.getAttribute('title').trim();
+        const key = text.toLowerCase();
+        if (text && !seen.has(key)) {
+          seen.add(key);
+          terms.push(text);
+        }
+      });
+    });
+  });
+  return terms.length > 0 ? terms : null;
+}
+
 // Best-effort translation suggestions (sr → ru) via the free, CORS-enabled
 // MyMemory API. Returns a short list of distinct candidate translations —
 // quality varies since it's crowdsourced/machine translation, so these are
@@ -1403,6 +1443,8 @@ function AddWord({ onAdd, goToList, words }) {
   const [example, setExample] = useState('');
   const [justAdded, setJustAdded] = useState(false);
   const [lookupState, setLookupState] = useState('idle'); // idle | loading | notfound | error
+  const [relatedWords, setRelatedWords] = useState([]);
+  const [relatedState, setRelatedState] = useState('idle'); // idle | loading | notfound | error
   const srRef = useRef(null);
 
   // Matches an entered sr word against existing words, accounting for both
@@ -1418,9 +1460,29 @@ function AddWord({ onAdd, goToList, words }) {
     setRuVariants([]);
     setExample('');
     setLookupState('idle');
+    setRelatedWords([]);
+    setRelatedState('idle');
     setJustAdded(true);
     setTimeout(() => setJustAdded(false), 1600);
     srRef.current?.focus();
+  };
+
+  const lookupRelatedWords = async () => {
+    if (!sr.trim()) return;
+    setRelatedState('loading');
+    try {
+      const found = await fetchRelatedWordsFromWiktionary(sr.trim());
+      if (found) {
+        setRelatedWords(found);
+        setRelatedState('idle');
+      } else {
+        setRelatedWords([]);
+        setRelatedState('notfound');
+      }
+    } catch (e) {
+      setRelatedWords([]);
+      setRelatedState('error');
+    }
   };
 
   const lookupExample = async () => {
@@ -1453,7 +1515,14 @@ function AddWord({ onAdd, goToList, words }) {
       <input
         ref={srRef}
         value={sr}
-        onChange={(e) => setSr(e.target.value)}
+        onChange={(e) => {
+          setSr(e.target.value);
+          // the shown related-words list is only valid for the word it
+          // was looked up for — clear it so stale results from a
+          // previous word can't be mistaken for this one's
+          setRelatedWords([]);
+          setRelatedState('idle');
+        }}
         placeholder="нпр. хвала"
         className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-1.5 outline-none"
         style={{ fontFamily: FONT_DISPLAY, fontSize: '1.05rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
@@ -1471,6 +1540,66 @@ function AddWord({ onAdd, goToList, words }) {
       ) : (
         <div style={{ marginBottom: 12 }} />
       )}
+
+      <div className="flex items-center justify-between mb-1.5">
+        <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
+          ПОВЕЗАНЕ РЕЧИ (WIKTIONARY, НЕОБАВЕЗНО)
+        </label>
+        <button
+          type="button"
+          onClick={lookupRelatedWords}
+          disabled={!sr.trim() || relatedState === 'loading'}
+          className="flex items-center gap-1.5 rounded-md px-2.5 py-1"
+          style={{
+            fontFamily: FONT_BODY,
+            fontSize: '0.72rem',
+            color: sr.trim() ? '#D4A54A' : '#4B5680',
+            background: 'transparent',
+          }}
+          title="Потражи повезане/изведене речи на Wiktionary-ју (може не наћи ништа)"
+        >
+          {relatedState === 'loading' ? (
+            <Loader2 size={13} className="animate-spin" />
+          ) : (
+            <Search size={13} />
+          )}
+          Прикажи повезане речи
+        </button>
+      </div>
+      {relatedWords.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-1.5">
+          {relatedWords.map((w) => (
+            <span
+              key={w}
+              className="inline-flex items-center rounded-full px-2.5 py-1"
+              style={{ background: '#12192E', border: '1px solid #2A3355', color: '#8892AE', fontSize: '0.8rem' }}
+            >
+              {w}
+            </span>
+          ))}
+        </div>
+      )}
+      {relatedState === 'notfound' && (
+        <p style={{ color: '#8892AE', fontSize: '0.72rem', marginBottom: 8 }}>
+          Ништа нађено на Wiktionary-ју — реч можда тамо не постоји или нема наведене повезане речи.
+        </p>
+      )}
+      {relatedState === 'error' && (
+        <p style={{ color: '#8892AE', fontSize: '0.72rem', marginBottom: 8 }}>
+          Претрага тренутно није доступна.
+        </p>
+      )}
+      {sr.trim() && (
+        <a
+          href={`https://en.wiktionary.org/wiki/${encodeURIComponent(sr.trim())}#Serbo-Croatian`}
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: '#5C6690', fontSize: '0.72rem', marginBottom: 12, display: 'inline-block' }}
+        >
+          Отвори пуну одредницу на Wiktionary-ју →
+        </a>
+      )}
+      <div style={{ marginBottom: 12 }} />
 
       <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
         ПРЕВОДИ (МОЖЕ ВИШЕ)
