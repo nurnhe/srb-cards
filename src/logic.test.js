@@ -16,6 +16,10 @@ import {
   isPlausibleRussianText,
   suggestTagsFromRelatedWords,
   filterWordsByQuery,
+  levenshteinDistance,
+  isFuzzyMatch,
+  findLikelyTypoOf,
+  isTypoCorrected,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -366,6 +370,112 @@ describe('isAnswerCorrect', () => {
 
   it('ignores case and punctuation differences', () => {
     expect(isAnswerCorrect('sr-ru', current, ' Спасибо! ')).toBe(true);
+  });
+
+  it('accepts a one-letter typo of a translation variant', () => {
+    expect(isAnswerCorrect('sr-ru', current, 'спасиба')).toBe(true); // о -> а
+  });
+
+  it('accepts a typo of a variant other than the first', () => {
+    expect(isAnswerCorrect('sr-ru', current, 'благодаря')).toBe(true); // ю -> я
+  });
+
+  it('rejects an answer more than one edit away', () => {
+    expect(isAnswerCorrect('sr-ru', current, 'спасиух')).toBe(false); // 2 edits
+  });
+
+  it('accepts a typo composed with script conversion for ru-sr direction', () => {
+    expect(isAnswerCorrect('ru-sr', current, 'hvata')).toBe(true); // hvala with l -> t, typed in Latin
+  });
+
+  it('does not fuzzy-match short words, to avoid accepting a real different word', () => {
+    // "мама" and "рама" are both genuine, distinct 4-letter words exactly
+    // one edit apart — fuzzy tolerance must not paper over that.
+    const shortCurrent = { sr: 'мама', ru: 'мать' };
+    expect(isAnswerCorrect('ru-sr', shortCurrent, 'рама')).toBe(false);
+  });
+});
+
+describe('levenshteinDistance', () => {
+  it('is 0 for identical strings', () => {
+    expect(levenshteinDistance('abc', 'abc')).toBe(0);
+  });
+  it('is 1 for a single substitution', () => {
+    expect(levenshteinDistance('abc', 'abd')).toBe(1);
+  });
+  it('is 1 for a single deletion or insertion', () => {
+    expect(levenshteinDistance('abc', 'ab')).toBe(1);
+    expect(levenshteinDistance('ab', 'abc')).toBe(1);
+  });
+  it('counts full length against an empty string', () => {
+    expect(levenshteinDistance('', 'abc')).toBe(3);
+  });
+  it('matches the classic kitten/sitting example', () => {
+    expect(levenshteinDistance('kitten', 'sitting')).toBe(3);
+  });
+});
+
+describe('isFuzzyMatch', () => {
+  it('matches identical strings regardless of length', () => {
+    expect(isFuzzyMatch('ok', 'ok')).toBe(true);
+  });
+  it('matches a one-edit typo for words at/above the length floor', () => {
+    expect(isFuzzyMatch('hvala', 'hvata')).toBe(true);
+  });
+  it('rejects a two-edit difference even above the length floor', () => {
+    expect(isFuzzyMatch('hvala', 'hvatx')).toBe(false);
+  });
+  it('rejects a one-edit difference below the length floor', () => {
+    expect(isFuzzyMatch('мама', 'рама')).toBe(false);
+  });
+});
+
+describe('findLikelyTypoOf', () => {
+  const words = [
+    { id: '1', sr: 'hvala' },
+    { id: '2', sr: 'blagodariti' },
+    { id: '3', sr: 'dom' },
+  ];
+
+  it('finds a near-typo of an existing word', () => {
+    expect(findLikelyTypoOf('hvata', words)?.id).toBe('1');
+  });
+
+  it('matches across scripts', () => {
+    const cyrWords = [{ id: '1', sr: 'хвала' }];
+    expect(findLikelyTypoOf('hvata', cyrWords)?.id).toBe('1');
+  });
+
+  it('does not flag a short word even one edit from an existing short word', () => {
+    expect(findLikelyTypoOf('dan', words)).toBeNull();
+  });
+
+  it('returns null for a genuinely unrelated new word', () => {
+    expect(findLikelyTypoOf('sasvimnovarec', words)).toBeNull();
+  });
+
+  it('returns null for empty input', () => {
+    expect(findLikelyTypoOf('', words)).toBeNull();
+  });
+});
+
+describe('isTypoCorrected', () => {
+  const current = { sr: 'хвала', ru: 'спасибо' };
+
+  it('is false for an exact match', () => {
+    expect(isTypoCorrected('sr-ru', current, 'спасибо')).toBe(false);
+  });
+
+  it('is true when accepted only via typo tolerance', () => {
+    expect(isTypoCorrected('sr-ru', current, 'спасиба')).toBe(true);
+  });
+
+  it('is false when the answer is genuinely wrong', () => {
+    expect(isTypoCorrected('sr-ru', current, 'привет')).toBe(false);
+  });
+
+  it('is true for a script-converted typo in the ru-sr direction', () => {
+    expect(isTypoCorrected('ru-sr', current, 'hvata')).toBe(true);
   });
 });
 

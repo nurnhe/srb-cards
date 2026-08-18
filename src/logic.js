@@ -204,6 +204,57 @@ export function findDuplicateWord(sr, words) {
   );
 }
 
+// Standard Levenshtein edit distance (insertions/deletions/substitutions;
+// an adjacent-letter transposition costs 2, not 1 — a known, accepted
+// limitation, same spirit as the transliteration edge cases above).
+export function levenshteinDistance(a, b) {
+  const m = a.length;
+  const n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+// Fuzzy string match used for typo tolerance. Deliberately conservative:
+// disabled below FUZZY_MIN_LENGTH because short words are often one edit
+// apart from a completely different real word (e.g. "мама" vs "рама" —
+// both valid 4-letter words, distance 1) — accepting those would silently
+// mark real mistakes as correct, which is worse than being strict.
+const FUZZY_MIN_LENGTH = 5;
+const FUZZY_MAX_DISTANCE = 1;
+
+export function isFuzzyMatch(a, b) {
+  if (a === b) return true;
+  if (a.length < FUZZY_MIN_LENGTH || b.length < FUZZY_MIN_LENGTH) return false;
+  return levenshteinDistance(a, b) <= FUZZY_MAX_DISTANCE;
+}
+
+// Suggests an existing dictionary word that a new sr entry might be a typo
+// of. Softer than findDuplicateWord: it's meant to prompt a "did you mean
+// X?" check, not block submission, since this app's whole vocabulary is
+// full of real words no external dictionary would recognize as valid —
+// only near-misses of words *already in this dictionary* are worth flagging.
+export function findLikelyTypoOf(sr, words) {
+  const t = (sr || '').trim();
+  if (!t) return null;
+  const inputForms = [normalize(t), normalize(otherScript(t) || '')].filter(Boolean);
+  return (
+    (words || []).find((w) => {
+      const existingForms = [normalize(w.sr), normalize(otherScript(w.sr) || '')].filter(Boolean);
+      return existingForms.some((e) => inputForms.some((i) => isFuzzyMatch(e, i)));
+    }) || null
+  );
+}
+
 // Suggests tags for a word being added, based on tags already applied to
 // related words the user has picked to link (only words that already exist
 // in the dictionary carry tags at this point — newly-added related words
@@ -238,14 +289,27 @@ export function filterWordsByQuery(words, query) {
   });
 }
 
+// Normalized set of acceptable answers for a card in a given direction —
+// every ru variant for sr-ru, or sr in both scripts for ru-sr.
+function answerTargets(direction, current) {
+  if (direction === 'sr-ru') return acceptedAnswers(current.ru);
+  return [current.sr, otherScript(current.sr)].filter(Boolean).map(normalize);
+}
+
 // Checks a typed practice answer against the current card, accepting either
-// script for sr-direction answers and any saved translation variant for
-// ru-direction answers.
+// script for sr-direction answers, any saved translation variant for
+// ru-direction answers, and small typos (see isFuzzyMatch) of any of those.
 export function isAnswerCorrect(direction, current, input) {
-  if (direction === 'sr-ru') {
-    return acceptedAnswers(current.ru).includes(normalize(input));
-  }
-  const alt = otherScript(current.sr);
-  const targets = [current.sr, alt].filter(Boolean);
-  return targets.some((t) => normalize(t) === normalize(input));
+  const normInput = normalize(input);
+  return answerTargets(direction, current).some((t) => isFuzzyMatch(t, normInput));
+}
+
+// True when isAnswerCorrect accepted the input only via typo tolerance —
+// none of the targets matched exactly. Lets the UI tell the difference
+// between "correct" and "correct, typo forgiven" instead of hiding it.
+export function isTypoCorrected(direction, current, input) {
+  const normInput = normalize(input);
+  const targets = answerTargets(direction, current);
+  if (targets.includes(normInput)) return false;
+  return targets.some((t) => isFuzzyMatch(t, normInput));
 }
