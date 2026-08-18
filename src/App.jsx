@@ -505,25 +505,25 @@ export default function App() {
   // translation. Every word in the resulting group (main word + all
   // related words) is linked to every other one — a whole word family
   // added together should be mutually connected, not just each related
-  // word linked back to the main word alone. Selected tags are applied to
-  // whichever words in the group were opted in (each related word carries
-  // its own `applyTags` flag; the main word's inclusion is controlled by
-  // applyTagsToMain) — not silently just the main word, since a tag can
-  // legitimately describe the whole word family (e.g. "verbs").
-  // relatedSelections: [{ sr, ru, applyTags }], tagNames: [string]
+  // word linked back to the main word alone. Each tag has its own list of
+  // which words in the group it applies to — different tags picked in
+  // the same add can go to different subsets of the words, since e.g.
+  // "verbs" might apply to the whole family while a more specific tag
+  // only fits one of them.
+  // relatedSelections: [{ sr, ru, tagNames: string[] }], mainTagNames: [string]
   const addWordWithRelated = useCallback(
-    async (sr, ru, example, relatedSelections, tagNames, applyTagsToMain = true) => {
+    async (sr, ru, example, relatedSelections, mainTagNames) => {
       const mainWord = await addWord(sr, ru, example);
       if (!mainWord) return;
       const group = [mainWord];
-      const tagTargets = applyTagsToMain ? [mainWord] : [];
+      const relatedWithTags = [];
       for (const rel of relatedSelections || []) {
         const existing = findDuplicateWord(rel.sr, words);
         if (!existing && (!rel.ru || !rel.ru.trim())) continue;
         const relatedWord = existing || (await addWord(rel.sr, rel.ru, null));
         if (relatedWord) {
           group.push(relatedWord);
-          if (rel.applyTags) tagTargets.push(relatedWord);
+          relatedWithTags.push({ word: relatedWord, tagNames: rel.tagNames || [] });
         }
       }
       for (let i = 0; i < group.length; i++) {
@@ -531,9 +531,12 @@ export default function App() {
           await linkWords(group[i].id, group[j].id);
         }
       }
-      for (const target of tagTargets) {
-        for (const name of tagNames || []) {
-          await tagWord(target.id, name);
+      for (const name of mainTagNames || []) {
+        await tagWord(mainWord.id, name);
+      }
+      for (const { word, tagNames } of relatedWithTags) {
+        for (const name of tagNames) {
+          await tagWord(word.id, name);
         }
       }
     },
@@ -663,7 +666,7 @@ function TabBar({ tab, setTab, count }) {
 
 function Practice({ words, tags, onAnswer }) {
   const [direction, setDirection] = useState('sr-ru'); // sr-ru: show SR, ask RU
-  const [tagFilter, setTagFilter] = useState(null);
+  const [tagFilter, setTagFilter] = useState(new Set()); // Set of tag ids; empty = all
   const [current, setCurrent] = useState(null);
   const [input, setInput] = useState('');
   const [feedback, setFeedback] = useState(null); // null | 'correct' | 'wrong'
@@ -673,7 +676,7 @@ function Practice({ words, tags, onAnswer }) {
   // words with more wrong answers — see buildWeightedDeck.
   const deckRef = useRef([]);
 
-  const pool = tagFilter ? words.filter((w) => w.tagIds.includes(tagFilter)) : words;
+  const pool = tagFilter.size > 0 ? words.filter((w) => w.tagIds.some((id) => tagFilter.has(id))) : words;
 
   const drawNext = useCallback(
     (excludeId) => {
@@ -737,7 +740,7 @@ function Practice({ words, tags, onAnswer }) {
   // words exist but the deck hasn't drawn a first card yet (happens for one
   // render right after mount/word-list changes, before the effect runs)
   if (!current) {
-    if (pool.length === 0 && tagFilter) {
+    if (pool.length === 0 && tagFilter.size > 0) {
       return (
         <div>
           <TagScopeBar tags={tags} tagFilter={tagFilter} onChange={setTagFilter} />
@@ -941,18 +944,22 @@ function Practice({ words, tags, onAnswer }) {
   );
 }
 
+// tagFilter is a Set of tag ids — a word matches if it has ANY of the
+// selected tags, so checking multiple pills broadens the pool rather
+// than narrowing it to an intersection.
 function TagScopeBar({ tags, tagFilter, onChange }) {
   if (!tags || tags.length === 0) return null;
+  const toggle = (id) => {
+    const next = new Set(tagFilter);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onChange(next);
+  };
   return (
     <div className="flex flex-wrap justify-center gap-1.5 mb-4">
-      <TagFilterPill active={tagFilter === null} label="Све теме" onClick={() => onChange(null)} />
+      <TagFilterPill active={tagFilter.size === 0} label="Све теме" onClick={() => onChange(new Set())} />
       {tags.map((t) => (
-        <TagFilterPill
-          key={t.id}
-          active={tagFilter === t.id}
-          label={t.name}
-          onClick={() => onChange(tagFilter === t.id ? null : t.id)}
-        />
+        <TagFilterPill key={t.id} active={tagFilter.has(t.id)} label={t.name} onClick={() => toggle(t.id)} />
       ))}
     </div>
   );
@@ -1030,7 +1037,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
   const [linkQuery, setLinkQuery] = useState('');
   const [taggingId, setTaggingId] = useState(null); // word currently picking/creating a tag
   const [tagQuery, setTagQuery] = useState('');
-  const [activeTagFilter, setActiveTagFilter] = useState(null);
+  const [activeTagFilter, setActiveTagFilter] = useState(new Set()); // Set of tag ids; empty = all
   const [sortMode, setSortMode] = useState('alpha'); // alpha | hardest
 
   if (words.length === 0) {
@@ -1063,7 +1070,8 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     }
     return srCollator.compare(a.sr, b.sr);
   });
-  const filtered = activeTagFilter ? sorted.filter((w) => w.tagIds.includes(activeTagFilter)) : sorted;
+  const filtered =
+    activeTagFilter.size > 0 ? sorted.filter((w) => w.tagIds.some((id) => activeTagFilter.has(id))) : sorted;
   const byId = Object.fromEntries(words.map((w) => [w.id, w]));
   const tagById = Object.fromEntries((tags || []).map((t) => [t.id, t]));
 
@@ -1123,16 +1131,23 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
       {tags && tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-1" style={{ paddingLeft: 4 }}>
           <TagFilterPill
-            active={activeTagFilter === null}
+            active={activeTagFilter.size === 0}
             label="Све"
-            onClick={() => setActiveTagFilter(null)}
+            onClick={() => setActiveTagFilter(new Set())}
           />
           {tags.map((t) => (
             <TagFilterPill
               key={t.id}
-              active={activeTagFilter === t.id}
+              active={activeTagFilter.has(t.id)}
               label={t.name}
-              onClick={() => setActiveTagFilter(activeTagFilter === t.id ? null : t.id)}
+              onClick={() =>
+                setActiveTagFilter((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(t.id)) next.delete(t.id);
+                  else next.add(t.id);
+                  return next;
+                })
+              }
             />
           ))}
         </div>
@@ -1497,30 +1512,37 @@ function AddWord({ onAdd, goToList, words, tags }) {
   const [relatedSelections, setRelatedSelections] = useState({});
   const [selectedTagNames, setSelectedTagNames] = useState([]);
   const [tagQuery, setTagQuery] = useState('');
-  // Which words (by sr, or '__main__' for the word being added) are
-  // explicitly excluded from getting the selected tags — everything not
-  // in this set is included by default, so tags apply to the whole
-  // group (main word + related words) unless opted out.
-  const [tagExclusions, setTagExclusions] = useState(new Set());
+  // Per-tag: which words (by sr, or '__main__' for the word being added)
+  // are explicitly excluded from that specific tag — everything not in a
+  // tag's set is included by default, so each tag applies to the whole
+  // group (main word + related words) unless opted out, and different
+  // tags can apply to different subsets. { [tagName]: Set<key> }
+  const [tagExclusions, setTagExclusions] = useState({});
   const srRef = useRef(null);
 
   const addTagName = (name) => {
     const clean = name.trim().toLowerCase();
     if (!clean || selectedTagNames.includes(clean)) return;
     setSelectedTagNames((prev) => [...prev, clean]);
+    setTagExclusions((prev) => ({ ...prev, [clean]: new Set() }));
     setTagQuery('');
   };
 
   const removeTagName = (name) => {
     setSelectedTagNames((prev) => prev.filter((t) => t !== name));
+    setTagExclusions((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   };
 
-  const toggleTagTarget = (key) => {
+  const toggleTagTarget = (tagName, key) => {
     setTagExclusions((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
+      const set = new Set(prev[tagName]);
+      if (set.has(key)) set.delete(key);
+      else set.add(key);
+      return { ...prev, [tagName]: set };
     });
   };
 
@@ -1567,10 +1589,10 @@ function AddWord({ onAdd, goToList, words, tags }) {
     const relatedToAdd = Object.entries(relatedSelections).map(([relSr, sel]) => ({
       sr: relSr,
       ru: sel.ru,
-      applyTags: !tagExclusions.has(relSr),
+      tagNames: selectedTagNames.filter((name) => !tagExclusions[name]?.has(relSr)),
     }));
-    const applyTagsToMain = !tagExclusions.has('__main__');
-    onAdd(sr, ruVariants.join(', '), example, relatedToAdd, selectedTagNames, applyTagsToMain);
+    const mainTagNames = selectedTagNames.filter((name) => !tagExclusions[name]?.has('__main__'));
+    onAdd(sr, ruVariants.join(', '), example, relatedToAdd, mainTagNames);
     setSr('');
     setRuVariants([]);
     setExample('');
@@ -1580,7 +1602,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
     setRelatedSelections({});
     setSelectedTagNames([]);
     setTagQuery('');
-    setTagExclusions(new Set());
+    setTagExclusions({});
     setJustAdded(true);
     setTimeout(() => setJustAdded(false), 1600);
     srRef.current?.focus();
@@ -1652,7 +1674,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
           setRelatedWords([]);
           setRelatedState('idle');
           setRelatedSelections({});
-          setTagExclusions(new Set());
+          setTagExclusions({});
         }}
         placeholder="нпр. хвала"
         className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-1.5 outline-none"
@@ -1806,23 +1828,51 @@ function AddWord({ onAdd, goToList, words, tags }) {
       </label>
       <div className="mt-1.5 mb-1.5">
         {selectedTagNames.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
+          <div className="flex flex-col gap-2 mb-2">
             {selectedTagNames.map((name) => (
-              <span
-                key={name}
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
-                style={{ background: '#2A2410', color: '#D4A54A', fontSize: '0.72rem', fontFamily: FONT_MONO }}
-              >
-                {name}
-                <button
-                  type="button"
-                  onClick={() => removeTagName(name)}
-                  aria-label={`Уклони таг ${name}`}
-                  style={{ color: '#9C7E30', lineHeight: 1 }}
+              <div key={name}>
+                <span
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                  style={{ background: '#2A2410', color: '#D4A54A', fontSize: '0.72rem', fontFamily: FONT_MONO }}
                 >
-                  ×
-                </button>
-              </span>
+                  {name}
+                  <button
+                    type="button"
+                    onClick={() => removeTagName(name)}
+                    aria-label={`Уклони таг ${name}`}
+                    style={{ color: '#9C7E30', lineHeight: 1 }}
+                  >
+                    ×
+                  </button>
+                </span>
+                {Object.keys(relatedSelections).length > 0 && (
+                  <div className="flex flex-col gap-0.5 mt-1 ml-1 pl-2" style={{ borderLeft: '2px solid #2A3355' }}>
+                    <p style={{ color: '#5C6690', fontSize: '0.68rem' }}>примењује се на:</p>
+                    <label className="flex items-center gap-2" style={{ fontSize: '0.8rem', color: '#F5F1E8' }}>
+                      <input
+                        type="checkbox"
+                        checked={!tagExclusions[name]?.has('__main__')}
+                        onChange={() => toggleTagTarget(name, '__main__')}
+                      />
+                      {sr.trim()}
+                    </label>
+                    {Object.keys(relatedSelections).map((relSr) => (
+                      <label
+                        key={relSr}
+                        className="flex items-center gap-2"
+                        style={{ fontSize: '0.8rem', color: '#F5F1E8' }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!tagExclusions[name]?.has(relSr)}
+                          onChange={() => toggleTagTarget(name, relSr)}
+                        />
+                        {relSr}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -1873,35 +1923,6 @@ function AddWord({ onAdd, goToList, words, tags }) {
             </div>
           );
         })()}
-        {selectedTagNames.length > 0 && Object.keys(relatedSelections).length > 0 && (
-          <div className="mt-3 pt-3" style={{ borderTop: '1px solid #2A3355' }}>
-            <p style={{ color: '#8892AE', fontSize: '0.75rem', marginBottom: 6 }}>
-              Тагови ће бити примењени на (откачи да искључиш):
-            </p>
-            <label className="flex items-center gap-2 mb-1" style={{ fontSize: '0.85rem', color: '#F5F1E8' }}>
-              <input
-                type="checkbox"
-                checked={!tagExclusions.has('__main__')}
-                onChange={() => toggleTagTarget('__main__')}
-              />
-              {sr.trim()}
-            </label>
-            {Object.keys(relatedSelections).map((relSr) => (
-              <label
-                key={relSr}
-                className="flex items-center gap-2 mb-1"
-                style={{ fontSize: '0.85rem', color: '#F5F1E8' }}
-              >
-                <input
-                  type="checkbox"
-                  checked={!tagExclusions.has(relSr)}
-                  onChange={() => toggleTagTarget(relSr)}
-                />
-                {relSr}
-              </label>
-            ))}
-          </div>
-        )}
       </div>
       <div style={{ marginBottom: 20 }} />
 
