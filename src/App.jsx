@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag } from 'lucide-react';
+import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import {
   otherScript,
@@ -15,6 +15,7 @@ import {
   filterWordsByQuery,
   isTypoCorrected,
   findLikelyTypoOf,
+  pickSerbianVoice,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -151,6 +152,82 @@ async function fetchTranslationSuggestions(srWord) {
     .sort((a, b) => (b.match || 0) - (a.match || 0) || (b.quality || 0) - (a.quality || 0))
     .forEach((m) => add(m.translation));
   return candidates.slice(0, 5);
+}
+
+// speechSynthesis.getVoices() often returns an empty list on the very
+// first call — voices load asynchronously and fire a 'voiceschanged'
+// event once ready. Waits for that (with a timeout fallback, since some
+// browsers — notably older Safari — don't reliably fire it).
+function getVoicesAsync() {
+  return new Promise((resolve) => {
+    const existing = window.speechSynthesis.getVoices();
+    if (existing.length > 0) {
+      resolve(existing);
+      return;
+    }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      window.speechSynthesis.removeEventListener('voiceschanged', finish);
+      resolve(window.speechSynthesis.getVoices());
+    };
+    window.speechSynthesis.addEventListener('voiceschanged', finish);
+    setTimeout(finish, 500);
+  });
+}
+
+// Small speaker button that reads a Serbian word aloud via the browser's
+// SpeechSynthesis API — free, no network request, no API key, but voice
+// availability/quality genuinely varies by browser and device (there's no
+// guarantee of a native Serbian voice at all). Hides itself entirely when
+// the API isn't supported, rather than showing a button that can't work.
+function PronounceButton({ text, size = 15 }) {
+  const [supported, setSupported] = useState(true);
+  const [hasNativeVoice, setHasNativeVoice] = useState(true);
+  const [speaking, setSpeaking] = useState(false);
+
+  useEffect(() => {
+    if (!('speechSynthesis' in window)) {
+      setSupported(false);
+      return;
+    }
+    let cancelled = false;
+    getVoicesAsync().then((voices) => {
+      if (!cancelled) setHasNativeVoice(!!pickSerbianVoice(voices));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!supported || !text?.trim()) return null;
+
+  const speak = async (e) => {
+    e.stopPropagation();
+    const voices = await getVoicesAsync();
+    const voice = pickSerbianVoice(voices);
+    const utter = new SpeechSynthesisUtterance(text.trim());
+    utter.lang = voice ? voice.lang : 'sr-RS';
+    if (voice) utter.voice = voice;
+    utter.onstart = () => setSpeaking(true);
+    utter.onend = () => setSpeaking(false);
+    utter.onerror = () => setSpeaking(false);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={speak}
+      title={hasNativeVoice ? 'Изговори' : 'Изговори (нема српског гласа на овом уређају)'}
+      aria-label={`Изговори ${text}`}
+      style={{ color: speaking ? '#D4A54A' : hasNativeVoice ? '#8892AE' : '#5C6690', lineHeight: 0 }}
+    >
+      <Volume2 size={size} />
+    </button>
+  );
 }
 
 // Manages a list of accepted translation variants as chips: manual add,
@@ -847,6 +924,7 @@ function Practice({ words, tags, onAnswer }) {
           {promptLabel}
         </span>
         <div
+          className="flex items-center justify-center gap-2"
           style={{
             fontFamily: FONT_DISPLAY,
             fontSize: '2.1rem',
@@ -856,6 +934,7 @@ function Practice({ words, tags, onAnswer }) {
           }}
         >
           {prompt}
+          {direction === 'sr-ru' && <PronounceButton text={current.sr} size={20} />}
         </div>
         {direction === 'sr-ru' && otherScript(current.sr) && (
           <div
@@ -925,13 +1004,14 @@ function Practice({ words, tags, onAnswer }) {
               </div>
             )}
             {feedback === 'wrong' && (
-              <div style={{ color: '#6B6455', fontSize: '0.9rem' }}>
+              <div className="flex items-center justify-center gap-1.5" style={{ color: '#6B6455', fontSize: '0.9rem' }}>
                 Тачан одговор:{' '}
                 <span style={{ fontWeight: 600, color: '#1C2333' }}>
                   {direction === 'sr-ru'
                     ? current.ru
                     : [current.sr, otherScript(current.sr)].filter(Boolean).join(' / ')}
                 </span>
+                {direction === 'ru-sr' && <PronounceButton text={current.sr} />}
               </div>
             )}
             {current.example && (
@@ -1255,8 +1335,9 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
             ) : (
               <div className="flex items-start gap-3">
                 <div className="flex-1 min-w-0">
-                  <div style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>
+                  <div className="flex items-center gap-1.5" style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>
                     {w.sr}
+                    <PronounceButton text={w.sr} size={14} />
                   </div>
                   {otherScript(w.sr) && (
                     <div style={{ color: '#5C6690', fontSize: '0.78rem', marginTop: 1 }}>
@@ -1730,23 +1811,26 @@ function AddWord({ onAdd, goToList, words, tags }) {
       <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
         СРПСКИ
       </label>
-      <input
-        ref={srRef}
-        value={sr}
-        onChange={(e) => {
-          setSr(e.target.value);
-          // the shown related-words list is only valid for the word it
-          // was looked up for — clear it so stale results from a
-          // previous word can't be mistaken for this one's
-          setRelatedWords([]);
-          setRelatedState('idle');
-          setRelatedSelections({});
-          setTagExclusions({});
-        }}
-        placeholder="нпр. хвала"
-        className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-1.5 outline-none"
-        style={{ fontFamily: FONT_DISPLAY, fontSize: '1.05rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
-      />
+      <div className="flex items-center gap-2 mt-1.5 mb-1.5">
+        <input
+          ref={srRef}
+          value={sr}
+          onChange={(e) => {
+            setSr(e.target.value);
+            // the shown related-words list is only valid for the word it
+            // was looked up for — clear it so stale results from a
+            // previous word can't be mistaken for this one's
+            setRelatedWords([]);
+            setRelatedState('idle');
+            setRelatedSelections({});
+            setTagExclusions({});
+          }}
+          placeholder="нпр. хвала"
+          className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
+          style={{ fontFamily: FONT_DISPLAY, fontSize: '1.05rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
+        />
+        <PronounceButton text={sr} size={18} />
+      </div>
       {duplicate ? (
         <p style={{ color: '#E28B95', fontSize: '0.78rem', marginBottom: 12 }}>
           Ова реч већ постоји: <span style={{ color: '#F5F1E8', fontWeight: 600 }}>{duplicate.sr}</span> →{' '}

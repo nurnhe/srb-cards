@@ -313,3 +313,17 @@ export function isTypoCorrected(direction, current, input) {
   if (targets.includes(normInput)) return false;
   return targets.some((t) => isFuzzyMatch(t, normInput));
 }
+
+// Picks the best available voice for Serbian pronunciation out of the
+// browser's SpeechSynthesis voice list. Prefers an exact "sr-RS" tag, then
+// any other "sr*" locale (covers "sr-Cyrl-RS", "sr-Latn-RS", bare "sr",
+// etc. across different browsers/OSes), else null — meaning no native
+// Serbian voice is installed, so playback would fall back to whatever
+// default voice the browser picks, which may mispronounce badly. Takes
+// plain {lang, name} objects rather than real SpeechSynthesisVoice
+// instances so it can be unit-tested without a browser.
+export function pickSerbianVoice(voices) {
+  const list = voices || [];
+  const isSerbian = (v) => (v?.lang || '').toLowerCase().startsWith('sr');
+  return list.find((v) => (v?.lang || '').toLowerCase() === 'sr-rs') || list.find(isSerbian) || null;
+}
