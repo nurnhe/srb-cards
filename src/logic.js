@@ -340,3 +340,67 @@ export function pickSerbianVoice(voices) {
 export function googleTranslateTtsUrl(text) {
   return `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&q=${encodeURIComponent(text)}&tl=sr`;
 }
+
+// Builds the JSON backup structure — self-contained (tags and related
+// words referenced by sr text, not internal DB ids) so it's portable
+// across a fresh Supabase project, not just a round-trip within the same
+// one. `now` is injectable for deterministic tests; defaults to real time.
+export function buildExportData(words, tags, now = new Date()) {
+  const tagNameById = Object.fromEntries((tags || []).map((t) => [t.id, t.name]));
+  const wordById = Object.fromEntries((words || []).map((w) => [w.id, w]));
+  return {
+    version: 1,
+    exportedAt: now.toISOString(),
+    words: (words || []).map((w) => ({
+      sr: w.sr,
+      ru: w.ru,
+      example: w.example || null,
+      correct_count: w.correct_count || 0,
+      wrong_count: w.wrong_count || 0,
+      tags: (w.tagIds || []).map((id) => tagNameById[id]).filter(Boolean),
+      relatedWords: (w.relatedIds || []).map((id) => wordById[id]?.sr).filter(Boolean),
+    })),
+  };
+}
+
+// Validates and normalizes an imported JSON backup before anything is
+// written to the database — fails closed with a specific, human-readable
+// reason rather than letting a malformed file partially import as
+// garbage. Returns { valid: true, words: [...] } or { valid: false, error }.
+export function parseImportData(jsonText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (e) {
+    return { valid: false, error: 'Датотека није валидан JSON.' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { valid: false, error: 'Датотека нема очекивани облик (треба да буде JSON објекат).' };
+  }
+  if (!Array.isArray(parsed.words)) {
+    return { valid: false, error: 'Датотека нема "words" низ.' };
+  }
+  const words = [];
+  for (let i = 0; i < parsed.words.length; i++) {
+    const w = parsed.words[i];
+    if (!w || typeof w !== 'object' || Array.isArray(w)) {
+      return { valid: false, error: `Ставка #${i + 1} није валидан објекат.` };
+    }
+    if (typeof w.sr !== 'string' || !w.sr.trim()) {
+      return { valid: false, error: `Ставка #${i + 1} нема важеће "sr" поље.` };
+    }
+    if (typeof w.ru !== 'string' || !w.ru.trim()) {
+      return { valid: false, error: `Ставка #${i + 1} („${w.sr}") нема важеће "ru" поље.` };
+    }
+    words.push({
+      sr: w.sr.trim(),
+      ru: w.ru.trim(),
+      example: typeof w.example === 'string' && w.example.trim() ? w.example.trim() : null,
+      tags: Array.isArray(w.tags) ? w.tags.filter((t) => typeof t === 'string' && t.trim()) : [],
+      relatedWords: Array.isArray(w.relatedWords)
+        ? w.relatedWords.filter((r) => typeof r === 'string' && r.trim())
+        : [],
+    });
+  }
+  return { valid: true, words };
+}
