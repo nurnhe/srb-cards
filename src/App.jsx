@@ -2123,7 +2123,13 @@ function AddWord({ onAdd, goToList, words, tags }) {
       </label>
       <div className="mt-1.5 mb-1.5">
         {selectedTagNames.length > 0 && (
-          <div className="flex flex-col gap-2 mb-2">
+          <div
+            className={
+              Object.keys(relatedSelections).length > 0
+                ? 'flex flex-col gap-2 mb-2'
+                : 'flex flex-wrap gap-1.5 mb-2'
+            }
+          >
             {selectedTagNames.map((name) => (
               <div key={name}>
                 <span
