@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag } from 'lucide-react';
+import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import {
   otherScript,
@@ -15,6 +15,8 @@ import {
   filterWordsByQuery,
   isTypoCorrected,
   findLikelyTypoOf,
+  pickSerbianVoice,
+  googleTranslateTtsUrl,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -121,6 +123,27 @@ async function fetchRelatedWordsFromWiktionary(srWord) {
   return terms.length > 0 ? terms : null;
 }
 
+// Best-effort IPA pronunciation lookup, reusing the same Wiktionary REST
+// endpoint/section as the related-words lookup above (a separate request,
+// though, since this one fires opportunistically off the pronounce button
+// rather than requiring a user to click "Прикажи повезане речи" first).
+// Grabs the first IPA span in the Serbo-Croatian section rather than
+// trying to disambiguate multiple etymologies — good enough for a
+// best-effort hint, not meant to be exhaustive.
+async function fetchIpaFromWiktionary(srWord) {
+  const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const heading = doc.getElementById('Serbo-Croatian');
+  const section = heading?.closest('section');
+  if (!section) return null;
+  const ipaEl = section.querySelector('.IPA');
+  const text = ipaEl?.textContent?.trim();
+  return text || null;
+}
+
 // Best-effort translation suggestions (sr → ru) via the free, CORS-enabled
 // MyMemory API. Returns a short list of distinct candidate translations —
 // quality varies since it's crowdsourced/machine translation, so these are
@@ -151,6 +174,194 @@ async function fetchTranslationSuggestions(srWord) {
     .sort((a, b) => (b.match || 0) - (a.match || 0) || (b.quality || 0) - (a.quality || 0))
     .forEach((m) => add(m.translation));
   return candidates.slice(0, 5);
+}
+
+// speechSynthesis.getVoices() often returns an empty list on the very
+// first call — voices load asynchronously and fire a 'voiceschanged'
+// event once ready. Waits for that (with a timeout fallback, since some
+// browsers — notably older Safari — don't reliably fire it).
+function getVoicesAsync() {
+  return new Promise((resolve) => {
+    const existing = window.speechSynthesis.getVoices();
+    if (existing.length > 0) {
+      resolve(existing);
+      return;
+    }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      window.speechSynthesis.removeEventListener('voiceschanged', finish);
+      resolve(window.speechSynthesis.getVoices());
+    };
+    window.speechSynthesis.addEventListener('voiceschanged', finish);
+    setTimeout(finish, 500);
+  });
+}
+
+// Neither Google Translate's TTS audio nor the browser SpeechSynthesis
+// fallback held up in testing — kept the code in place (a better free
+// source may turn up later) but hidden behind this flag rather than
+// deleted, per Kira's request. IPA text (below) is unaffected by this —
+// it's a separate, always-on feature.
+const AUDIO_PLAYBACK_ENABLED = false;
+
+// Speaker button that plays a Serbian word's real pronunciation via
+// Google Translate's TTS audio (see googleTranslateTtsUrl — unofficial
+// endpoint, best-effort), falling back to the browser's SpeechSynthesis
+// API only if that fails to play. Currently hidden — see
+// AUDIO_PLAYBACK_ENABLED above.
+function PronounceButton({ text, size = 15 }) {
+  const [playState, setPlayState] = useState('idle'); // idle | loading | playing
+  const [usedFallback, setUsedFallback] = useState(false);
+  const [hasNativeVoice, setHasNativeVoice] = useState(true);
+
+  // Per-word state shouldn't leak across cards in Practice, where this
+  // component instance is reused as `text` changes underneath it.
+  useEffect(() => {
+    setPlayState('idle');
+    setUsedFallback(false);
+    window.speechSynthesis?.cancel();
+  }, [text]);
+
+  useEffect(() => {
+    if (!AUDIO_PLAYBACK_ENABLED || !('speechSynthesis' in window)) return;
+    let cancelled = false;
+    getVoicesAsync().then((voices) => {
+      if (!cancelled) setHasNativeVoice(!!pickSerbianVoice(voices));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!AUDIO_PLAYBACK_ENABLED || !text?.trim()) return null;
+  const cleanText = text.trim();
+
+  const speakViaBrowser = async () => {
+    if (!('speechSynthesis' in window)) {
+      setPlayState('idle');
+      return;
+    }
+    setUsedFallback(true);
+    const voices = await getVoicesAsync();
+    const voice = pickSerbianVoice(voices);
+    const utter = new SpeechSynthesisUtterance(cleanText);
+    utter.lang = voice ? voice.lang : 'sr-RS';
+    if (voice) utter.voice = voice;
+    utter.onstart = () => setPlayState('playing');
+    utter.onend = () => setPlayState('idle');
+    utter.onerror = () => setPlayState('idle');
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+  };
+
+  const play = (e) => {
+    e.stopPropagation();
+    setPlayState('loading');
+    const audio = new Audio(googleTranslateTtsUrl(cleanText));
+    audio.onplay = () => setPlayState('playing');
+    audio.onended = () => setPlayState('idle');
+    audio.onerror = () => speakViaBrowser();
+    audio.play().catch(() => speakViaBrowser());
+  };
+
+  const title = usedFallback
+    ? hasNativeVoice
+      ? 'Изговори (резервни изговор — Google TTS није успео)'
+      : 'Изговори (резервни изговор, нема српског гласа на овом уређају)'
+    : 'Изговори';
+
+  return (
+    <button
+      type="button"
+      onClick={play}
+      title={title}
+      aria-label={`Изговори ${cleanText}`}
+      style={{ color: playState !== 'idle' ? '#D4A54A' : '#8892AE', lineHeight: 0 }}
+    >
+      {playState === 'loading' ? <Loader2 size={size} className="animate-spin" /> : <Volume2 size={size} />}
+    </button>
+  );
+}
+
+// Cache of sr word (normalized) -> IPA text ('' = looked up, none found),
+// shared across every IpaText instance for the life of the tab — the
+// Words list alone can render 100+ of these, and repeat views of the
+// same word in Practice shouldn't re-fetch.
+const ipaCache = new Map();
+
+// Shows a Serbian word's IPA transcription from Wiktionary — always on
+// (no click needed), Serbian-only (Kira: "Transcription for Russian
+// words is not needed"). Fetches lazily once the element actually
+// scrolls into view rather than on mount, so the Words list doesn't fire
+// 100+ simultaneous external requests the moment it renders. Also
+// debounced, since this same component sits behind the live sr input on
+// Add Word — without it, every keystroke while typing a word would fire
+// its own Wiktionary request for that in-progress fragment. Shows
+// nothing while loading or if no transcription was found — this is a
+// best-effort bonus, not a required element.
+function IpaText({ text, size = '0.75em' }) {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+  const [ipa, setIpa] = useState(null); // null = not fetched yet, '' = none found
+  const key = normalize(text || '');
+
+  useEffect(() => {
+    // The span (and thus ref.current) doesn't exist yet on the render
+    // where text is still empty — re-run this once text shows up, not
+    // just when `visible` itself changes, or the observer never gets
+    // attached at all for a field that starts empty (e.g. Add Word's sr
+    // input).
+    if (!ref.current || visible) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisible(true);
+          obs.disconnect();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+    obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, [visible, key]);
+
+  useEffect(() => {
+    setIpa(null);
+  }, [key]);
+
+  useEffect(() => {
+    if (!visible || !key || !text?.trim()) return;
+    if (ipaCache.has(key)) {
+      setIpa(ipaCache.get(key));
+      return;
+    }
+    let cancelled = false;
+    const debounce = setTimeout(() => {
+      fetchIpaFromWiktionary(text.trim())
+        .then((found) => {
+          ipaCache.set(key, found || '');
+          if (!cancelled) setIpa(found || '');
+        })
+        .catch(() => {
+          ipaCache.set(key, '');
+          if (!cancelled) setIpa('');
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(debounce);
+    };
+  }, [visible, key, text]);
+
+  if (!text?.trim()) return null;
+
+  return (
+    <span ref={ref} style={{ fontFamily: FONT_MONO, fontSize: size, color: '#8892AE' }}>
+      {ipa}
+    </span>
+  );
 }
 
 // Manages a list of accepted translation variants as chips: manual add,
@@ -847,6 +1058,7 @@ function Practice({ words, tags, onAnswer }) {
           {promptLabel}
         </span>
         <div
+          className="flex items-center justify-center gap-2"
           style={{
             fontFamily: FONT_DISPLAY,
             fontSize: '2.1rem',
@@ -856,7 +1068,9 @@ function Practice({ words, tags, onAnswer }) {
           }}
         >
           {prompt}
+          {direction === 'sr-ru' && <PronounceButton text={current.sr} size={20} />}
         </div>
+        {direction === 'sr-ru' && <IpaText text={current.sr} size="0.85rem" />}
         {direction === 'sr-ru' && otherScript(current.sr) && (
           <div
             style={{
@@ -925,13 +1139,15 @@ function Practice({ words, tags, onAnswer }) {
               </div>
             )}
             {feedback === 'wrong' && (
-              <div style={{ color: '#6B6455', fontSize: '0.9rem' }}>
+              <div className="flex items-center justify-center gap-1.5" style={{ color: '#6B6455', fontSize: '0.9rem' }}>
                 Тачан одговор:{' '}
                 <span style={{ fontWeight: 600, color: '#1C2333' }}>
                   {direction === 'sr-ru'
                     ? current.ru
                     : [current.sr, otherScript(current.sr)].filter(Boolean).join(' / ')}
                 </span>
+                {direction === 'ru-sr' && <PronounceButton text={current.sr} />}
+                {direction === 'ru-sr' && <IpaText text={current.sr} />}
               </div>
             )}
             {current.example && (
@@ -1255,8 +1471,10 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
             ) : (
               <div className="flex items-start gap-3">
                 <div className="flex-1 min-w-0">
-                  <div style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>
+                  <div className="flex items-center gap-1.5" style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>
                     {w.sr}
+                    <PronounceButton text={w.sr} size={14} />
+                    <IpaText text={w.sr} />
                   </div>
                   {otherScript(w.sr) && (
                     <div style={{ color: '#5C6690', fontSize: '0.78rem', marginTop: 1 }}>
@@ -1730,23 +1948,27 @@ function AddWord({ onAdd, goToList, words, tags }) {
       <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
         СРПСКИ
       </label>
-      <input
-        ref={srRef}
-        value={sr}
-        onChange={(e) => {
-          setSr(e.target.value);
-          // the shown related-words list is only valid for the word it
-          // was looked up for — clear it so stale results from a
-          // previous word can't be mistaken for this one's
-          setRelatedWords([]);
-          setRelatedState('idle');
-          setRelatedSelections({});
-          setTagExclusions({});
-        }}
-        placeholder="нпр. хвала"
-        className="w-full rounded-lg px-3.5 py-2.5 mt-1.5 mb-1.5 outline-none"
-        style={{ fontFamily: FONT_DISPLAY, fontSize: '1.05rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
-      />
+      <div className="flex items-center gap-2 mt-1.5 mb-1.5">
+        <input
+          ref={srRef}
+          value={sr}
+          onChange={(e) => {
+            setSr(e.target.value);
+            // the shown related-words list is only valid for the word it
+            // was looked up for — clear it so stale results from a
+            // previous word can't be mistaken for this one's
+            setRelatedWords([]);
+            setRelatedState('idle');
+            setRelatedSelections({});
+            setTagExclusions({});
+          }}
+          placeholder="нпр. хвала"
+          className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
+          style={{ fontFamily: FONT_DISPLAY, fontSize: '1.05rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
+        />
+        <PronounceButton text={sr} size={18} />
+        <IpaText text={sr} size="0.85rem" />
+      </div>
       {duplicate ? (
         <p style={{ color: '#E28B95', fontSize: '0.78rem', marginBottom: 12 }}>
           Ова реч већ постоји: <span style={{ color: '#F5F1E8', fontWeight: 600 }}>{duplicate.sr}</span> →{' '}

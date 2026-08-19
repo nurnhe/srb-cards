@@ -313,3 +313,30 @@ export function isTypoCorrected(direction, current, input) {
   if (targets.includes(normInput)) return false;
   return targets.some((t) => isFuzzyMatch(t, normInput));
 }
+
+// Picks the best available voice for Serbian pronunciation out of the
+// browser's SpeechSynthesis voice list. Prefers an exact "sr-RS" tag, then
+// any other "sr*" locale (covers "sr-Cyrl-RS", "sr-Latn-RS", bare "sr",
+// etc. across different browsers/OSes), else null — meaning no native
+// Serbian voice is installed, so playback would fall back to whatever
+// default voice the browser picks, which may mispronounce badly. Takes
+// plain {lang, name} objects rather than real SpeechSynthesisVoice
+// instances so it can be unit-tested without a browser.
+export function pickSerbianVoice(voices) {
+  const list = voices || [];
+  const isSerbian = (v) => (v?.lang || '').toLowerCase().startsWith('sr');
+  return list.find((v) => (v?.lang || '').toLowerCase() === 'sr-rs') || list.find(isSerbian) || null;
+}
+
+// Google Translate's TTS endpoint — unofficial and undocumented (it's the
+// same one translate.google.com's own UI calls, not a published public
+// API), so it could change or start rate-limiting without notice. Used
+// via an <audio> element rather than fetch(), which sidesteps CORS since
+// playback doesn't require reading the response — but also means it can't
+// be verified from plain JS beyond "did the URL get built correctly."
+// Chosen anyway because actual Serbian speech beats a wrong-language
+// SpeechSynthesis fallback voice; browser TTS remains the last-resort
+// fallback if this fails.
+export function googleTranslateTtsUrl(text) {
+  return `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&q=${encodeURIComponent(text)}&tl=sr`;
+}

@@ -20,6 +20,8 @@ import {
   isFuzzyMatch,
   findLikelyTypoOf,
   isTypoCorrected,
+  pickSerbianVoice,
+  googleTranslateTtsUrl,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -547,5 +549,49 @@ describe('isPlausibleRussianText', () => {
   it('rejects empty/missing text', () => {
     expect(isPlausibleRussianText('')).toBe(false);
     expect(isPlausibleRussianText(undefined)).toBe(false);
+  });
+});
+
+describe('pickSerbianVoice', () => {
+  it('prefers an exact sr-RS voice over another Serbian locale', () => {
+    const voices = [{ lang: 'sr-Cyrl-RS', name: 'A' }, { lang: 'sr-RS', name: 'B' }];
+    expect(pickSerbianVoice(voices)?.name).toBe('B');
+  });
+
+  it('falls back to any sr-* locale when no exact sr-RS voice exists', () => {
+    const voices = [{ lang: 'en-US', name: 'A' }, { lang: 'sr-Latn-RS', name: 'B' }];
+    expect(pickSerbianVoice(voices)?.name).toBe('B');
+  });
+
+  it('matches a bare "sr" tag', () => {
+    expect(pickSerbianVoice([{ lang: 'sr', name: 'A' }])?.name).toBe('A');
+  });
+
+  it('is case-insensitive on the lang tag', () => {
+    expect(pickSerbianVoice([{ lang: 'SR-RS', name: 'A' }])?.name).toBe('A');
+  });
+
+  it('returns null when no Serbian voice is present', () => {
+    const voices = [{ lang: 'en-US', name: 'A' }, { lang: 'ru-RU', name: 'B' }];
+    expect(pickSerbianVoice(voices)).toBeNull();
+  });
+
+  it('handles an empty or missing voice list', () => {
+    expect(pickSerbianVoice([])).toBeNull();
+    expect(pickSerbianVoice(null)).toBeNull();
+  });
+});
+
+describe('googleTranslateTtsUrl', () => {
+  it('builds a URL targeting Serbian with the text URL-encoded', () => {
+    const url = googleTranslateTtsUrl('hvala');
+    expect(url).toContain('tl=sr');
+    expect(url).toContain('q=hvala');
+    expect(url).toMatch(/^https:\/\/translate\.google\.com\/translate_tts\?/);
+  });
+
+  it('encodes special characters and Cyrillic text', () => {
+    const url = googleTranslateTtsUrl('хвала пуно');
+    expect(url).toContain(encodeURIComponent('хвала пуно'));
   });
 });
