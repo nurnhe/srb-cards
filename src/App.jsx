@@ -2122,57 +2122,58 @@ function AddWord({ onAdd, goToList, words, tags }) {
         ТАГОВИ (НЕОБАВЕЗНО)
       </label>
       <div className="mt-1.5 mb-1.5">
-        {selectedTagNames.length > 0 && (
-          <div className="flex flex-col gap-2 mb-2">
-            {selectedTagNames.map((name) => (
-              <div key={name}>
-                <span
-                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
-                  style={{ background: '#2A2410', color: '#D4A54A', fontSize: '0.72rem', fontFamily: FONT_MONO }}
+        <input
+          value={tagQuery}
+          onChange={(e) => setTagQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && tagQuery.trim()) {
+              e.preventDefault();
+              addTagName(tagQuery);
+              setTagQuery('');
+            }
+          }}
+          placeholder="претражи или направи нови таг…"
+          className="w-full rounded-lg px-3.5 py-2.5 mb-1.5 outline-none"
+          style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
+        />
+        {(() => {
+          const q = tagQuery.trim().toLowerCase();
+          const visibleTags = (tags || []).filter((t) => !q || t.name.toLowerCase().includes(q));
+          const exactExists = (tags || []).some((t) => t.name.toLowerCase() === q);
+          if (visibleTags.length === 0 && !q) return null;
+          return (
+            <div className="flex flex-wrap gap-1.5 mb-1.5">
+              {visibleTags.map((t) => (
+                <TagFilterPill
+                  key={t.id}
+                  active={selectedTagNames.includes(t.name.toLowerCase())}
+                  label={t.name}
+                  onClick={() =>
+                    selectedTagNames.includes(t.name.toLowerCase())
+                      ? removeTagName(t.name.toLowerCase())
+                      : addTagName(t.name)
+                  }
+                />
+              ))}
+              {q && !exactExists && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    addTagName(tagQuery);
+                    setTagQuery('');
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs"
+                  style={{ fontFamily: FONT_MONO, background: '#12192E', border: '1px solid #3D8B5F', color: '#7DC79A' }}
                 >
-                  {name}
-                  <button
-                    type="button"
-                    onClick={() => removeTagName(name)}
-                    aria-label={`Уклони таг ${name}`}
-                    style={{ color: '#9C7E30', lineHeight: 1 }}
-                  >
-                    ×
-                  </button>
-                </span>
-                {Object.keys(relatedSelections).length > 0 && (
-                  <div className="flex flex-col gap-0.5 mt-1 ml-1 pl-2" style={{ borderLeft: '2px solid #2A3355' }}>
-                    <p style={{ color: '#5C6690', fontSize: '0.68rem' }}>примењује се на:</p>
-                    <label className="flex items-center gap-2" style={{ fontSize: '0.8rem', color: '#F5F1E8' }}>
-                      <input
-                        type="checkbox"
-                        checked={!tagExclusions[name]?.has('__main__')}
-                        onChange={() => toggleTagTarget(name, '__main__')}
-                      />
-                      {sr.trim()}
-                    </label>
-                    {Object.keys(relatedSelections).map((relSr) => (
-                      <label
-                        key={relSr}
-                        className="flex items-center gap-2"
-                        style={{ fontSize: '0.8rem', color: '#F5F1E8' }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={!tagExclusions[name]?.has(relSr)}
-                          onChange={() => toggleTagTarget(name, relSr)}
-                        />
-                        {relSr}
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+                  <Plus size={11} />
+                  направи „{tagQuery.trim()}"
+                </button>
+              )}
+            </div>
+          );
+        })()}
         {suggestedTagNames.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 mb-2">
+          <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
             <span style={{ color: '#5C6690', fontSize: '0.7rem' }}>предлог из повезаних речи:</span>
             {suggestedTagNames.map((name) => (
               <button
@@ -2188,53 +2189,39 @@ function AddWord({ onAdd, goToList, words, tags }) {
             ))}
           </div>
         )}
-        <input
-          value={tagQuery}
-          onChange={(e) => setTagQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && tagQuery.trim()) {
-              e.preventDefault();
-              addTagName(tagQuery);
-            }
-          }}
-          placeholder="нпр. храна, глаголи…"
-          className="w-full rounded-lg px-3.5 py-2.5 outline-none"
-          style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
-        />
-        {(() => {
-          const q = tagQuery.trim().toLowerCase();
-          const candidates = (tags || [])
-            .filter((t) => !selectedTagNames.includes(t.name.toLowerCase()))
-            .filter((t) => !q || t.name.toLowerCase().includes(q))
-            .slice(0, 6);
-          const exactExists = (tags || []).some((t) => t.name.toLowerCase() === q);
-          if (candidates.length === 0 && (!q || exactExists)) return null;
-          return (
-            <div className="flex flex-col gap-1 mt-1.5">
-              {candidates.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => addTagName(t.name)}
-                  className="text-left rounded-md px-2.5 py-1.5"
-                  style={{ background: '#12192E', color: '#D4A54A', fontSize: '0.85rem' }}
-                >
-                  {t.name}
-                </button>
-              ))}
-              {q && !exactExists && (
-                <button
-                  type="button"
-                  onClick={() => addTagName(tagQuery)}
-                  className="text-left rounded-md px-2.5 py-1.5"
-                  style={{ background: '#12192E', color: '#7DC79A', fontSize: '0.85rem' }}
-                >
-                  + направи нови таг „{tagQuery.trim()}"
-                </button>
-              )}
-            </div>
-          );
-        })()}
+        {selectedTagNames.length > 0 && Object.keys(relatedSelections).length > 0 && (
+          <div className="flex flex-col gap-2 mt-1">
+            {selectedTagNames.map((name) => (
+              <div key={name} className="flex flex-col gap-0.5 pl-2" style={{ borderLeft: '2px solid #2A3355' }}>
+                <p style={{ color: '#5C6690', fontSize: '0.68rem' }}>
+                  <span style={{ color: '#D4A54A', fontFamily: FONT_MONO }}>{name}</span> примењује се на:
+                </p>
+                <label className="flex items-center gap-2" style={{ fontSize: '0.8rem', color: '#F5F1E8' }}>
+                  <input
+                    type="checkbox"
+                    checked={!tagExclusions[name]?.has('__main__')}
+                    onChange={() => toggleTagTarget(name, '__main__')}
+                  />
+                  {sr.trim()}
+                </label>
+                {Object.keys(relatedSelections).map((relSr) => (
+                  <label
+                    key={relSr}
+                    className="flex items-center gap-2"
+                    style={{ fontSize: '0.8rem', color: '#F5F1E8' }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!tagExclusions[name]?.has(relSr)}
+                      onChange={() => toggleTagTarget(name, relSr)}
+                    />
+                    {relSr}
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div style={{ marginBottom: 20 }} />
 
