@@ -199,30 +199,33 @@ function getVoicesAsync() {
   });
 }
 
+// Neither Google Translate's TTS audio nor the browser SpeechSynthesis
+// fallback held up in testing — kept the code in place (a better free
+// source may turn up later) but hidden behind this flag rather than
+// deleted, per Kira's request. IPA text (below) is unaffected by this —
+// it's a separate, always-on feature.
+const AUDIO_PLAYBACK_ENABLED = false;
+
 // Speaker button that plays a Serbian word's real pronunciation via
 // Google Translate's TTS audio (see googleTranslateTtsUrl — unofficial
 // endpoint, best-effort), falling back to the browser's SpeechSynthesis
-// API only if that fails to play. Also opportunistically fetches an IPA
-// transcription from Wiktionary on first click and shows it once found,
-// as a text-only complement (helpful even when no audio is available at
-// all, and a sanity check against the audio when it is).
+// API only if that fails to play. Currently hidden — see
+// AUDIO_PLAYBACK_ENABLED above.
 function PronounceButton({ text, size = 15 }) {
   const [playState, setPlayState] = useState('idle'); // idle | loading | playing
   const [usedFallback, setUsedFallback] = useState(false);
   const [hasNativeVoice, setHasNativeVoice] = useState(true);
-  const [ipa, setIpa] = useState(null); // null = not fetched yet, '' = fetched, none found
 
   // Per-word state shouldn't leak across cards in Practice, where this
   // component instance is reused as `text` changes underneath it.
   useEffect(() => {
     setPlayState('idle');
     setUsedFallback(false);
-    setIpa(null);
     window.speechSynthesis?.cancel();
   }, [text]);
 
   useEffect(() => {
-    if (!('speechSynthesis' in window)) return;
+    if (!AUDIO_PLAYBACK_ENABLED || !('speechSynthesis' in window)) return;
     let cancelled = false;
     getVoicesAsync().then((voices) => {
       if (!cancelled) setHasNativeVoice(!!pickSerbianVoice(voices));
@@ -232,7 +235,7 @@ function PronounceButton({ text, size = 15 }) {
     };
   }, []);
 
-  if (!text?.trim()) return null;
+  if (!AUDIO_PLAYBACK_ENABLED || !text?.trim()) return null;
   const cleanText = text.trim();
 
   const speakViaBrowser = async () => {
@@ -261,12 +264,6 @@ function PronounceButton({ text, size = 15 }) {
     audio.onended = () => setPlayState('idle');
     audio.onerror = () => speakViaBrowser();
     audio.play().catch(() => speakViaBrowser());
-
-    if (ipa === null) {
-      fetchIpaFromWiktionary(cleanText)
-        .then((found) => setIpa(found || ''))
-        .catch(() => setIpa(''));
-    }
   };
 
   const title = usedFallback
@@ -276,19 +273,93 @@ function PronounceButton({ text, size = 15 }) {
     : 'Изговори';
 
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <button
-        type="button"
-        onClick={play}
-        title={title}
-        aria-label={`Изговори ${cleanText}`}
-        style={{ color: playState !== 'idle' ? '#D4A54A' : '#8892AE', lineHeight: 0 }}
-      >
-        {playState === 'loading' ? <Loader2 size={size} className="animate-spin" /> : <Volume2 size={size} />}
-      </button>
-      {ipa && (
-        <span style={{ fontFamily: FONT_MONO, fontSize: '0.75em', color: '#8892AE' }}>{ipa}</span>
-      )}
+    <button
+      type="button"
+      onClick={play}
+      title={title}
+      aria-label={`Изговори ${cleanText}`}
+      style={{ color: playState !== 'idle' ? '#D4A54A' : '#8892AE', lineHeight: 0 }}
+    >
+      {playState === 'loading' ? <Loader2 size={size} className="animate-spin" /> : <Volume2 size={size} />}
+    </button>
+  );
+}
+
+// Cache of sr word (normalized) -> IPA text ('' = looked up, none found),
+// shared across every IpaText instance for the life of the tab — the
+// Words list alone can render 100+ of these, and repeat views of the
+// same word in Practice shouldn't re-fetch.
+const ipaCache = new Map();
+
+// Shows a Serbian word's IPA transcription from Wiktionary — always on
+// (no click needed), Serbian-only (Kira: "Transcription for Russian
+// words is not needed"). Fetches lazily once the element actually
+// scrolls into view rather than on mount, so the Words list doesn't fire
+// 100+ simultaneous external requests the moment it renders. Also
+// debounced, since this same component sits behind the live sr input on
+// Add Word — without it, every keystroke while typing a word would fire
+// its own Wiktionary request for that in-progress fragment. Shows
+// nothing while loading or if no transcription was found — this is a
+// best-effort bonus, not a required element.
+function IpaText({ text, size = '0.75em' }) {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+  const [ipa, setIpa] = useState(null); // null = not fetched yet, '' = none found
+  const key = normalize(text || '');
+
+  useEffect(() => {
+    // The span (and thus ref.current) doesn't exist yet on the render
+    // where text is still empty — re-run this once text shows up, not
+    // just when `visible` itself changes, or the observer never gets
+    // attached at all for a field that starts empty (e.g. Add Word's sr
+    // input).
+    if (!ref.current || visible) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisible(true);
+          obs.disconnect();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+    obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, [visible, key]);
+
+  useEffect(() => {
+    setIpa(null);
+  }, [key]);
+
+  useEffect(() => {
+    if (!visible || !key || !text?.trim()) return;
+    if (ipaCache.has(key)) {
+      setIpa(ipaCache.get(key));
+      return;
+    }
+    let cancelled = false;
+    const debounce = setTimeout(() => {
+      fetchIpaFromWiktionary(text.trim())
+        .then((found) => {
+          ipaCache.set(key, found || '');
+          if (!cancelled) setIpa(found || '');
+        })
+        .catch(() => {
+          ipaCache.set(key, '');
+          if (!cancelled) setIpa('');
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(debounce);
+    };
+  }, [visible, key, text]);
+
+  if (!text?.trim()) return null;
+
+  return (
+    <span ref={ref} style={{ fontFamily: FONT_MONO, fontSize: size, color: '#8892AE' }}>
+      {ipa}
     </span>
   );
 }
@@ -999,6 +1070,7 @@ function Practice({ words, tags, onAnswer }) {
           {prompt}
           {direction === 'sr-ru' && <PronounceButton text={current.sr} size={20} />}
         </div>
+        {direction === 'sr-ru' && <IpaText text={current.sr} size="0.85rem" />}
         {direction === 'sr-ru' && otherScript(current.sr) && (
           <div
             style={{
@@ -1075,6 +1147,7 @@ function Practice({ words, tags, onAnswer }) {
                     : [current.sr, otherScript(current.sr)].filter(Boolean).join(' / ')}
                 </span>
                 {direction === 'ru-sr' && <PronounceButton text={current.sr} />}
+                {direction === 'ru-sr' && <IpaText text={current.sr} />}
               </div>
             )}
             {current.example && (
@@ -1401,6 +1474,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
                   <div className="flex items-center gap-1.5" style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>
                     {w.sr}
                     <PronounceButton text={w.sr} size={14} />
+                    <IpaText text={w.sr} />
                   </div>
                   {otherScript(w.sr) && (
                     <div style={{ color: '#5C6690', fontSize: '0.78rem', marginTop: 1 }}>
@@ -1893,6 +1967,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
           style={{ fontFamily: FONT_DISPLAY, fontSize: '1.05rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
         />
         <PronounceButton text={sr} size={18} />
+        <IpaText text={sr} size="0.85rem" />
       </div>
       {duplicate ? (
         <p style={{ color: '#E28B95', fontSize: '0.78rem', marginBottom: 12 }}>
