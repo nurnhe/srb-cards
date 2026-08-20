@@ -33,6 +33,24 @@ source of "works locally, broken in prod" bugs. Netlify build settings must
 have Build command `npm run build` and Publish directory `dist`, or it
 silently serves unbuilt source instead of running Vite.
 
+## Running the built app in Docker
+
+Optional — for checking the real build locally before pushing. Doesn't affect
+the Netlify deploy.
+
+```
+docker build \
+  --build-arg VITE_SUPABASE_URL=... \
+  --build-arg VITE_SUPABASE_ANON_KEY=... \
+  -t srb-cards .
+docker run --rm -p 8080:8080 srb-cards   # http://localhost:8080
+```
+
+The Supabase URL and key have to be passed to `docker build`, not `docker run` —
+Vite bakes them into the JavaScript when it builds, so `docker run -e ...` does
+nothing. Changing them means rebuilding the image. Like local dev, this hits the
+real production database.
+
 ## Database schema (Supabase, all in `public` schema)
 
 - **words**: `id uuid pk`, `sr text`, `ru text` (comma-separated accepted
