@@ -19,6 +19,7 @@ import {
   googleTranslateTtsUrl,
   buildExportData,
   parseImportData,
+  stripPitchAccent,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -144,6 +145,57 @@ async function fetchIpaFromWiktionary(srWord) {
   const ipaEl = section.querySelector('.IPA');
   const text = ipaEl?.textContent?.trim();
   return text || null;
+}
+
+// Best-effort declension (nouns/adjectives) or conjugation (verbs) table
+// lookup — reuses the same Wiktionary REST endpoint/section as the other
+// lookups above. Each cell prefers its <a title="..."> (clean spelling,
+// same trick used for related words) and falls back to stripPitchAccent
+// on the visible text otherwise — needed for cells that link back to the
+// headword itself (no title on a self-link) and any cell with no link at
+// all (e.g. an em dash for a form that doesn't exist). A word can have
+// more than one table (multiple etymologies/senses each with their own),
+// so this returns all of them rather than just the first.
+async function fetchInflectionTables(srWord) {
+  const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const heading = doc.getElementById('Serbo-Croatian');
+  const section = heading?.closest('section');
+  if (!section) return null;
+
+  const cellText = (cell) => {
+    const link = cell.querySelector('a[title]');
+    if (link) return link.getAttribute('title').trim();
+    // row labels like "pluperfect" carry a Wiktionary footnote-reference
+    // <sup> (e.g. "pluperfect³") that reads as a typo without the actual
+    // footnote text alongside it — drop it rather than show a stray digit
+    const clone = cell.cloneNode(true);
+    clone.querySelectorAll('sup').forEach((sup) => sup.remove());
+    const text = clone.textContent.replace(/\s+/g, ' ').trim();
+    return text && text !== '—' ? stripPitchAccent(text) : text;
+  };
+
+  const tables = [];
+  section.querySelectorAll('table.inflection-table').forEach((table) => {
+    const caption = table.querySelector('caption')?.textContent?.trim() || '';
+    const rows = [];
+    table.querySelectorAll('tr').forEach((tr) => {
+      const cells = Array.from(tr.children)
+        .filter((cell) => !cell.classList.contains('separator') && !cell.classList.contains('blank-end-row'))
+        .map((cell) => ({
+          text: cellText(cell),
+          isHeader: cell.tagName === 'TH',
+          colSpan: cell.colSpan || 1,
+          rowSpan: cell.rowSpan || 1,
+        }));
+      if (cells.length > 0) rows.push({ cells });
+    });
+    if (rows.length > 0) tables.push({ caption, rows });
+  });
+  return tables.length > 0 ? tables : null;
 }
 
 // Best-effort translation suggestions (sr → ru) via the free, CORS-enabled
@@ -363,6 +415,67 @@ function IpaText({ text, size = '0.75em' }) {
     <span ref={ref} style={{ fontFamily: FONT_MONO, fontSize: size, color: '#8892AE' }}>
       {ipa}
     </span>
+  );
+}
+
+// Renders the declension/conjugation tables fetched by
+// fetchInflectionTables — a plain HTML table per Wiktionary table,
+// preserving its original colSpan/rowSpan so multi-column headers (e.g.
+// "singular"/"plural" spanning several forms) still line up correctly.
+function InflectionTables({ tables }) {
+  return (
+    <div className="flex flex-col gap-4">
+      {tables.map((table, i) => (
+        <div key={i} className="overflow-x-auto">
+          {table.caption && (
+            <p style={{ color: '#8892AE', fontSize: '0.72rem', fontFamily: FONT_MONO, marginBottom: 4 }}>
+              {table.caption}
+            </p>
+          )}
+          <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+            <tbody>
+              {table.rows.map((row, ri) => (
+                <tr key={ri}>
+                  {row.cells.map((cell, ci) =>
+                    cell.isHeader ? (
+                      <th
+                        key={ci}
+                        colSpan={cell.colSpan}
+                        rowSpan={cell.rowSpan}
+                        style={{
+                          border: '1px solid #2A3355',
+                          padding: '4px 8px',
+                          color: '#D4A54A',
+                          fontWeight: 600,
+                          textAlign: 'left',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {cell.text}
+                      </th>
+                    ) : (
+                      <td
+                        key={ci}
+                        colSpan={cell.colSpan}
+                        rowSpan={cell.rowSpan}
+                        style={{
+                          border: '1px solid #2A3355',
+                          padding: '4px 8px',
+                          color: '#F5F1E8',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {cell.text}
+                      </td>
+                    )
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1856,6 +1969,8 @@ function AddWord({ onAdd, goToList, words, tags }) {
   const [lookupState, setLookupState] = useState('idle'); // idle | loading | notfound | error
   const [relatedWords, setRelatedWords] = useState([]);
   const [relatedState, setRelatedState] = useState('idle'); // idle | loading | notfound | error
+  const [inflectionTables, setInflectionTables] = useState(null);
+  const [inflectionState, setInflectionState] = useState('idle'); // idle | loading | notfound | error
   // Related words the user has picked to also add to the dictionary —
   // { [word]: { ru: string, status: 'loading' | 'idle' } }
   const [relatedSelections, setRelatedSelections] = useState({});
@@ -2001,6 +2116,24 @@ function AddWord({ onAdd, goToList, words, tags }) {
     }
   };
 
+  const lookupInflectionTables = async () => {
+    if (!sr.trim()) return;
+    setInflectionState('loading');
+    try {
+      const found = await fetchInflectionTables(sr.trim());
+      if (found) {
+        setInflectionTables(found);
+        setInflectionState('idle');
+      } else {
+        setInflectionTables(null);
+        setInflectionState('notfound');
+      }
+    } catch (e) {
+      setInflectionTables(null);
+      setInflectionState('error');
+    }
+  };
+
   const lookupExample = async () => {
     if (!sr.trim()) return;
     setLookupState('loading');
@@ -2041,6 +2174,8 @@ function AddWord({ onAdd, goToList, words, tags }) {
             setRelatedState('idle');
             setRelatedSelections({});
             setTagExclusions({});
+            setInflectionTables(null);
+            setInflectionState('idle');
           }}
           placeholder="нпр. хвала"
           className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
@@ -2185,6 +2320,44 @@ function AddWord({ onAdd, goToList, words, tags }) {
         >
           Отвори пуну одредницу на Wiktionary-ју →
         </a>
+      )}
+
+      {sr.trim() && (
+        <div className="flex items-center justify-between mb-1.5">
+          <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
+            ПРОМЕНЕ ПО ПАДЕЖИМА/ЛИЦИМА (WIKTIONARY, НЕОБАВЕЗНО)
+          </label>
+          <button
+            type="button"
+            onClick={lookupInflectionTables}
+            disabled={inflectionState === 'loading'}
+            className="flex items-center gap-1.5 rounded-md px-2.5 py-1"
+            style={{ fontFamily: FONT_BODY, fontSize: '0.72rem', color: '#D4A54A', background: 'transparent' }}
+            title="Потражи табелу деклинације/конјугације на Wiktionary-ју (може не наћи ништа)"
+          >
+            {inflectionState === 'loading' ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Search size={13} />
+            )}
+            Прикажи промене
+          </button>
+        </div>
+      )}
+      {inflectionTables && (
+        <div className="mb-3">
+          <InflectionTables tables={inflectionTables} />
+        </div>
+      )}
+      {inflectionState === 'notfound' && (
+        <p style={{ color: '#8892AE', fontSize: '0.72rem', marginBottom: 8 }}>
+          Ништа нађено на Wiktionary-ју — реч можда тамо не постоји или нема наведену табелу.
+        </p>
+      )}
+      {inflectionState === 'error' && (
+        <p style={{ color: '#8892AE', fontSize: '0.72rem', marginBottom: 8 }}>
+          Претрага тренутно није доступна.
+        </p>
       )}
       <div style={{ marginBottom: 12 }} />
 

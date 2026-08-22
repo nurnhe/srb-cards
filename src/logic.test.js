@@ -24,6 +24,7 @@ import {
   googleTranslateTtsUrl,
   buildExportData,
   parseImportData,
+  stripPitchAccent,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -726,5 +727,58 @@ describe('parseImportData', () => {
     expect(result.valid).toBe(true);
     expect(result.words[0].sr).toBe('izlaz');
     expect(result.words[0].tags).toEqual(['imenica']);
+  });
+});
+
+describe('stripPitchAccent', () => {
+  // Real examples pulled from Wiktionary's declension table for "greh"
+  // and conjugation table for "raditi" (verified against the live API).
+  it('strips a real pitch-accent example (grȇh -> greh)', () => {
+    expect(stripPitchAccent('grȇh')).toBe('greh');
+  });
+
+  it('strips an acute accent on a vowel (gréha -> greha)', () => {
+    expect(stripPitchAccent('gréha')).toBe('greha');
+  });
+
+  it('strips accents from a slash-separated pair (grési / gréhovi)', () => {
+    expect(stripPitchAccent('grési')).toBe('gresi');
+    expect(stripPitchAccent('gréhovi')).toBe('grehovi');
+  });
+
+  it('strips a macron (unaccented length) on a vowel', () => {
+    expect(stripPitchAccent('rádēći')).toBe('radeći');
+  });
+
+  // The critical case: ć is c + the SAME combining acute accent (U+0301)
+  // used for pitch accent on vowels — must not be corrupted into "c".
+  it('preserves ć (acute is on a consonant, not a vowel)', () => {
+    expect(stripPitchAccent('ć')).toBe('ć');
+    expect(stripPitchAccent('rađenje')).toBe('rađenje');
+  });
+
+  it('preserves č, š, ž unchanged', () => {
+    expect(stripPitchAccent('čšž')).toBe('čšž');
+    expect(stripPitchAccent('češće')).toBe('češće');
+  });
+
+  it('preserves đ unchanged (not decomposable, no combining mark)', () => {
+    expect(stripPitchAccent('đak')).toBe('đak');
+  });
+
+  it('handles a word with both a real letter and an adjacent pitch accent', () => {
+    // hypothetical but representative: accent on the vowel before ć must
+    // be stripped while ć itself is kept
+    expect(stripPitchAccent('pòmoć')).toBe('pomoć');
+  });
+
+  it('leaves plain unaccented text unchanged', () => {
+    expect(stripPitchAccent('raditi')).toBe('raditi');
+  });
+
+  it('handles empty/missing input', () => {
+    expect(stripPitchAccent('')).toBe('');
+    expect(stripPitchAccent(null)).toBeNull();
+    expect(stripPitchAccent(undefined)).toBeUndefined();
   });
 });

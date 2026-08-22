@@ -404,3 +404,33 @@ export function parseImportData(jsonText) {
   }
   return { valid: true, words };
 }
+
+// Strips pitch-accent marks (grave/acute/macron/inverted-breve/etc.) from
+// Wiktionary declension/conjugation table text, which mark pronunciation,
+// not spelling — e.g. "grȇh"/"gréha" should display as "greh"/"greha".
+// This is genuinely tricky, not a plain "strip combining marks" job: real
+// Serbian letters č/š/ž/ć are THEMSELVES base+combining-mark sequences
+// under Unicode decomposition (č = c + combining caron, ć = c + combining
+// acute), and ć's mark (U+0301, acute) is the exact same codepoint pitch
+// accent uses for the "short rising" tone — the two are only
+// distinguishable by what they're attached to. Pitch accent only ever
+// marks vowels (and syllabic r); real Serbian orthographic marks only
+// ever attach to consonants (č/š/ž/ć) — so a mark is safe to strip
+// precisely when the letter before it is a vowel or "r", and must be kept
+// otherwise.
+export function stripPitchAccent(text) {
+  if (!text) return text;
+  const vowels = new Set(['a', 'e', 'i', 'o', 'u', 'r']);
+  let result = '';
+  let lastBase = '';
+  for (const ch of text.normalize('NFD')) {
+    if (/\p{Mn}/u.test(ch)) {
+      if (vowels.has(lastBase.toLowerCase())) continue; // pitch-accent mark on a vowel/syllabic r
+      result += ch; // orthographic mark (č/š/ž/ć) — keep
+    } else {
+      result += ch;
+      lastBase = ch;
+    }
+  }
+  return result.normalize('NFC');
+}
