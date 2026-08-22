@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2 } from 'lucide-react';
+import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import {
   otherScript,
@@ -17,6 +17,8 @@ import {
   findLikelyTypoOf,
   pickSerbianVoice,
   googleTranslateTtsUrl,
+  buildExportData,
+  parseImportData,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -758,6 +760,85 @@ export default function App() {
     [addWord, linkWords, tagWord, words]
   );
 
+  // Imports a parsed JSON backup (see parseImportData). Deliberately
+  // merge-only: an existing word (matched the same way duplicates are
+  // caught elsewhere — either script) is never overwritten or deleted,
+  // only skipped, so a bad or partial import can add data but can never
+  // destroy any. Three passes so cross-references between entries in the
+  // same file resolve regardless of order: all words first, then tags,
+  // then links (both need every word to already have an id).
+  const importWords = useCallback(
+    async (parsedWords) => {
+      const stats = { added: 0, skipped: 0, tagged: 0, linked: 0 };
+      let known = words;
+      const srToId = {};
+      const resolveId = (srText) => {
+        const norm = normalize(srText);
+        const altNorm = normalize(otherScript(srText) || '');
+        return srToId[norm] || (altNorm && srToId[altNorm]) || findDuplicateWord(srText, known)?.id || null;
+      };
+
+      for (const w of parsedWords) {
+        const existingId = resolveId(w.sr);
+        if (existingId) {
+          srToId[normalize(w.sr)] = existingId;
+          stats.skipped++;
+          continue;
+        }
+        const created = await addWord(w.sr, w.ru, w.example);
+        if (created) {
+          known = [...known, created];
+          srToId[normalize(w.sr)] = created.id;
+          stats.added++;
+        }
+      }
+
+      // Only apply tags/links actually missing — the DB-level upserts in
+      // tagWord/linkWords are idempotent either way, but re-running them on
+      // every already-tagged/already-linked word on a routine re-import
+      // (e.g. importing your own just-made backup as a no-op sanity check)
+      // would waste writes and make the summary numbers meaningless.
+      const wordById = (id) => known.find((w) => w.id === id);
+      const tagIdByName = (name) => tags.find((t) => t.name.toLowerCase() === name.trim().toLowerCase())?.id;
+      const taggedThisRun = new Set();
+      const linkedThisRun = new Set();
+
+      for (const w of parsedWords) {
+        const id = resolveId(w.sr);
+        if (!id) continue;
+        const word = wordById(id);
+        for (const tagName of w.tags) {
+          const key = `${id}:${tagName.trim().toLowerCase()}`;
+          if (taggedThisRun.has(key)) continue;
+          taggedThisRun.add(key);
+          const existingTagId = tagIdByName(tagName);
+          if (existingTagId && word?.tagIds?.includes(existingTagId)) continue;
+          await tagWord(id, tagName);
+          stats.tagged++;
+        }
+      }
+
+      for (const w of parsedWords) {
+        const id = resolveId(w.sr);
+        if (!id) continue;
+        const word = wordById(id);
+        for (const relSr of w.relatedWords) {
+          const relId = resolveId(relSr);
+          if (!relId || relId === id) continue;
+          const key = [id, relId].sort().join(':');
+          if (linkedThisRun.has(key)) continue;
+          linkedThisRun.add(key);
+          if (word?.relatedIds?.includes(relId)) continue;
+          await linkWords(id, relId);
+          stats.linked++;
+        }
+      }
+
+      return stats;
+    },
+    [words, tags, addWord, tagWord, linkWords]
+  );
+
   const untagWord = useCallback(async (wordId, tagId) => {
     const { error } = await supabase
       .from('word_tags')
@@ -800,6 +881,7 @@ export default function App() {
                 onUnlink={unlinkWords}
                 onTag={tagWord}
                 onUntag={untagWord}
+                onImport={importWords}
               />
             )}
             {tab === 'add' && (
@@ -1259,7 +1341,7 @@ function SortPill({ active, label, onClick }) {
   );
 }
 
-function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, onUntag }) {
+function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, onUntag, onImport }) {
   const [editingId, setEditingId] = useState(null);
   const [editSr, setEditSr] = useState('');
   const [editRuVariants, setEditRuVariants] = useState([]);
@@ -1271,6 +1353,37 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
   const [activeTagFilter, setActiveTagFilter] = useState(new Set()); // Set of tag ids; empty = all
   const [sortMode, setSortMode] = useState('alpha'); // alpha | hardest
   const [searchQuery, setSearchQuery] = useState('');
+  const [importState, setImportState] = useState('idle'); // idle | loading | error | done
+  const [importMessage, setImportMessage] = useState('');
+  const importFileRef = useRef(null);
+
+  const exportBackup = () => {
+    const data = buildExportData(words, tags);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `srb-cards-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importBackup = async (file) => {
+    setImportState('loading');
+    setImportMessage('');
+    const text = await file.text();
+    const parsed = parseImportData(text);
+    if (!parsed.valid) {
+      setImportState('error');
+      setImportMessage(parsed.error);
+      return;
+    }
+    const stats = await onImport(parsed.words);
+    setImportState('done');
+    setImportMessage(
+      `Додато: ${stats.added}. Прескочено (већ постоји): ${stats.skipped}. Тагова додато: ${stats.tagged}. Веза додато: ${stats.linked}.`
+    );
+  };
 
   if (words.length === 0) {
     return (
@@ -1364,6 +1477,49 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
           />
         </div>
       </div>
+
+      <div className="flex items-center gap-3 mb-1" style={{ paddingLeft: 4 }}>
+        <button
+          type="button"
+          onClick={exportBackup}
+          className="flex items-center gap-1.5"
+          style={{ fontFamily: FONT_MONO, fontSize: '0.72rem', color: '#8892AE' }}
+        >
+          <Download size={13} /> Извези резервну копију
+        </button>
+        <button
+          type="button"
+          onClick={() => importFileRef.current?.click()}
+          disabled={importState === 'loading'}
+          className="flex items-center gap-1.5"
+          style={{ fontFamily: FONT_MONO, fontSize: '0.72rem', color: '#8892AE' }}
+        >
+          {importState === 'loading' ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />} Увези
+        </button>
+        <input
+          ref={importFileRef}
+          type="file"
+          accept="application/json"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) importBackup(file);
+          }}
+        />
+      </div>
+      {importMessage && (
+        <p
+          style={{
+            color: importState === 'error' ? '#E28B95' : '#8892AE',
+            fontSize: '0.78rem',
+            paddingLeft: 4,
+            marginBottom: 4,
+          }}
+        >
+          {importMessage}
+        </p>
+      )}
 
       <input
         value={searchQuery}

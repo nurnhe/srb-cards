@@ -22,6 +22,8 @@ import {
   isTypoCorrected,
   pickSerbianVoice,
   googleTranslateTtsUrl,
+  buildExportData,
+  parseImportData,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -593,5 +595,136 @@ describe('googleTranslateTtsUrl', () => {
   it('encodes special characters and Cyrillic text', () => {
     const url = googleTranslateTtsUrl('хвала пуно');
     expect(url).toContain(encodeURIComponent('хвала пуно'));
+  });
+});
+
+describe('buildExportData', () => {
+  const tags = [
+    { id: 't1', name: 'imenica' },
+    { id: 't2', name: 'kretanje' },
+  ];
+  const words = [
+    { id: '1', sr: 'izlaz', ru: 'выход', example: null, correct_count: 3, wrong_count: 1, tagIds: ['t1', 't2'], relatedIds: ['2'] },
+    { id: '2', sr: 'izlaziti', ru: 'выходить', example: 'On izlazi napolje.', correct_count: 0, wrong_count: 0, tagIds: [], relatedIds: ['1'] },
+  ];
+  const fixedNow = new Date('2026-01-01T00:00:00.000Z');
+
+  it('includes version and an ISO exportedAt timestamp', () => {
+    const result = buildExportData(words, tags, fixedNow);
+    expect(result.version).toBe(1);
+    expect(result.exportedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('maps tag ids to tag names', () => {
+    const result = buildExportData(words, tags, fixedNow);
+    expect(result.words[0].tags).toEqual(['imenica', 'kretanje']);
+    expect(result.words[1].tags).toEqual([]);
+  });
+
+  it('maps related ids to sr text', () => {
+    const result = buildExportData(words, tags, fixedNow);
+    expect(result.words[0].relatedWords).toEqual(['izlaziti']);
+    expect(result.words[1].relatedWords).toEqual(['izlaz']);
+  });
+
+  it('carries example and stats through, defaulting missing stats to 0', () => {
+    const result = buildExportData(words, tags, fixedNow);
+    expect(result.words[1].example).toBe('On izlazi napolje.');
+    expect(result.words[0].example).toBeNull();
+    expect(result.words[0].correct_count).toBe(3);
+    expect(result.words[1].correct_count).toBe(0);
+  });
+
+  it('handles an empty vocabulary without crashing', () => {
+    const result = buildExportData([], [], fixedNow);
+    expect(result.words).toEqual([]);
+  });
+});
+
+describe('parseImportData', () => {
+  it('accepts a well-formed backup', () => {
+    const json = JSON.stringify({
+      version: 1,
+      words: [
+        { sr: 'izlaz', ru: 'выход', example: null, tags: ['imenica'], relatedWords: ['izlaziti'] },
+      ],
+    });
+    const result = parseImportData(json);
+    expect(result.valid).toBe(true);
+    expect(result.words).toEqual([
+      { sr: 'izlaz', ru: 'выход', example: null, tags: ['imenica'], relatedWords: ['izlaziti'] },
+    ]);
+  });
+
+  it('rejects text that is not valid JSON', () => {
+    const result = parseImportData('{not json');
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('rejects a JSON array at the top level instead of an object', () => {
+    const result = parseImportData('[]');
+    expect(result.valid).toBe(false);
+  });
+
+  it('rejects an object missing the words array', () => {
+    const result = parseImportData(JSON.stringify({ version: 1 }));
+    expect(result.valid).toBe(false);
+    expect(result.error).toMatch(/words/);
+  });
+
+  it('rejects a words entry missing sr', () => {
+    const json = JSON.stringify({ words: [{ ru: 'выход' }] });
+    const result = parseImportData(json);
+    expect(result.valid).toBe(false);
+    expect(result.error).toMatch(/sr/);
+  });
+
+  it('rejects a words entry missing ru', () => {
+    const json = JSON.stringify({ words: [{ sr: 'izlaz' }] });
+    const result = parseImportData(json);
+    expect(result.valid).toBe(false);
+    expect(result.error).toMatch(/ru/);
+  });
+
+  it('rejects a non-object entry in the words array', () => {
+    const json = JSON.stringify({ words: ['izlaz'] });
+    const result = parseImportData(json);
+    expect(result.valid).toBe(false);
+  });
+
+  it('defaults missing optional fields (example, tags, relatedWords) gracefully', () => {
+    const json = JSON.stringify({ words: [{ sr: 'izlaz', ru: 'выход' }] });
+    const result = parseImportData(json);
+    expect(result.valid).toBe(true);
+    expect(result.words[0]).toEqual({ sr: 'izlaz', ru: 'выход', example: null, tags: [], relatedWords: [] });
+  });
+
+  it('ignores non-string entries inside tags/relatedWords instead of failing the whole import', () => {
+    const json = JSON.stringify({
+      words: [{ sr: 'izlaz', ru: 'выход', tags: ['imenica', 42, null], relatedWords: ['izlaziti', {}] }],
+    });
+    const result = parseImportData(json);
+    expect(result.valid).toBe(true);
+    expect(result.words[0].tags).toEqual(['imenica']);
+    expect(result.words[0].relatedWords).toEqual(['izlaziti']);
+  });
+
+  it('accepts an empty words array', () => {
+    const result = parseImportData(JSON.stringify({ words: [] }));
+    expect(result.valid).toBe(true);
+    expect(result.words).toEqual([]);
+  });
+
+  it('round-trips cleanly through buildExportData', () => {
+    const tags = [{ id: 't1', name: 'imenica' }];
+    const words = [
+      { id: '1', sr: 'izlaz', ru: 'выход', example: null, correct_count: 0, wrong_count: 0, tagIds: ['t1'], relatedIds: [] },
+    ];
+    const exported = buildExportData(words, tags);
+    const result = parseImportData(JSON.stringify(exported));
+    expect(result.valid).toBe(true);
+    expect(result.words[0].sr).toBe('izlaz');
+    expect(result.words[0].tags).toEqual(['imenica']);
   });
 });
