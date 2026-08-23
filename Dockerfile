@@ -1,28 +1,39 @@
-# Multi-stage build: Node builds the static site, nginx serves it.
-# Mirrors what Netlify does (npm run build -> publish dist/).
+# Release image: Vite builds the static site, then the Express backend serves it
+# alongside /api, so one container on one port answers everything.
+#
+# Nothing is configured at build time. The site calls /api with relative URLs,
+# so the Supabase credentials and the port are read at container START:
+#   docker run --env-file .env -p 127.0.0.1:8080:8080 srb-cards
+#
+# This is the production image; dev/Dockerfile is the development one.
 
 FROM node:22-alpine AS build
 
 WORKDIR /app
 
-# Install dependencies first so this layer is cached across source edits.
+# Dependencies first, so this layer stays cached across source edits.
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# Vite inlines VITE_* variables into the bundle at BUILD time, so they have to
-# be passed to `docker build --build-arg`, not to `docker run -e`.
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_ANON_KEY
-ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
-ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
-
-COPY . .
+COPY index.html vite.config.js ./
+COPY src ./src
 RUN npm run build
 
 
-FROM nginx:alpine
+FROM node:22-alpine
 
-COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+WORKDIR /app
+ENV NODE_ENV=production
 
+COPY backend/package.json backend/package-lock.json ./backend/
+RUN cd backend && npm ci --omit=dev
+
+COPY backend/src ./backend/src
+COPY --from=build /app/dist ./dist
+
+# Only a default — `docker run -e PORT=...` overrides it.
+ENV PORT=8080
 EXPOSE 8080
+
+USER node
+CMD ["node", "backend/src/server.js"]

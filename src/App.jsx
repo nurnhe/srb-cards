@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload } from 'lucide-react';
-import { supabase } from './supabaseClient';
+import * as api from './api';
 import {
   otherScript,
   normalize,
@@ -511,45 +511,20 @@ export default function App() {
   const [storageError, setStorageError] = useState(false);
   const [tab, setTab] = useState('practice');
 
-  const attachLinks = useCallback((wordRows, linkRows) => {
-    const map = {};
-    (linkRows || []).forEach((l) => {
-      if (!map[l.word_id]) map[l.word_id] = [];
-      map[l.word_id].push(l.related_word_id);
-    });
-    return wordRows.map((w) => ({ ...w, relatedIds: map[w.id] || [] }));
-  }, []);
-
-  const attachTags = useCallback((wordRows, tagLinkRows) => {
-    const map = {};
-    (tagLinkRows || []).forEach((t) => {
-      if (!map[t.word_id]) map[t.word_id] = [];
-      map[t.word_id].push(t.tag_id);
-    });
-    return wordRows.map((w) => ({ ...w, tagIds: map[w.id] || [] }));
-  }, []);
-
   const reloadAll = useCallback(async () => {
-    const [wordsRes, linksRes, tagsRes, wordTagsRes] = await Promise.all([
-      supabase
-        .from('words')
-        .select('id, sr, ru, example, correct_count, wrong_count')
-        .order('created_at', { ascending: true }),
-      supabase.from('word_links').select('word_id, related_word_id'),
-      supabase.from('tags').select('id, name').order('name', { ascending: true }),
-      supabase.from('word_tags').select('word_id, tag_id'),
-    ]);
-    if (wordsRes.error || linksRes.error || tagsRes.error || wordTagsRes.error) {
+    // One request: the backend runs the four queries and stitches relatedIds
+    // and tagIds onto each word.
+    const { data, error } = await api.getVocabulary();
+    if (error || !data) {
       setStorageError(true);
       return;
     }
     setStorageError(false);
-    setTags(tagsRes.data || []);
-    const withLinks = attachLinks(wordsRes.data || [], linksRes.data || []);
-    setWords(attachTags(withLinks, wordTagsRes.data || []));
-  }, [attachLinks, attachTags]);
+    setTags(data.tags || []);
+    setWords(data.words || []);
+  }, []);
 
-  // load words + links + tags from Supabase on mount
+  // load words + links + tags from the backend on mount
   useEffect(() => {
     (async () => {
       await reloadAll();
@@ -559,62 +534,47 @@ export default function App() {
   }, []);
 
   const addWord = useCallback(async (sr, ru, example) => {
-    const { data, error } = await supabase
-      .from('words')
-      .insert({ sr: sr.trim().toLowerCase(), ru: ru.trim().toLowerCase(), example: example?.trim() || null })
-      .select('id, sr, ru, example, correct_count, wrong_count')
-      .single();
+    const { data, error } = await api.createWord(sr, ru, example);
     if (error || !data) {
       setStorageError(true);
       return null;
     }
     setStorageError(false);
-    const withDefaults = { ...data, relatedIds: [], tagIds: [] };
-    setWords((prev) => [...prev, withDefaults]);
-    return withDefaults;
+    setWords((prev) => [...prev, data]);
+    return data;
   }, []);
 
   const updateWord = useCallback(async (id, sr, ru, example) => {
-    const nextSr = sr.trim().toLowerCase();
-    const nextRu = ru.trim().toLowerCase();
-    const { error } = await supabase
-      .from('words')
-      .update({ sr: nextSr, ru: nextRu, example: example?.trim() || null })
-      .eq('id', id);
-    if (error) {
+    const { data, error } = await api.updateWord(id, sr, ru, example);
+    if (error || !data) {
       setStorageError(true);
       return;
     }
     setStorageError(false);
-    setWords((prev) =>
-      prev.map((w) =>
-        w.id === id ? { ...w, sr: nextSr, ru: nextRu, example: example?.trim() || null } : w
-      )
-    );
+    // Patch from the row the server saved — it is what lowercases sr/ru.
+    setWords((prev) => prev.map((w) => (w.id === id ? { ...w, ...data } : w)));
   }, []);
 
   // Records a practice attempt for a word — increments correct_count or
-  // wrong_count. Reads the current value from local state and writes it
-  // back; fine for single-user use, not built for concurrent editors.
-  const recordAnswer = useCallback(
-    async (id, isCorrect) => {
-      const word = words.find((w) => w.id === id);
-      if (!word) return;
-      const field = isCorrect ? 'correct_count' : 'wrong_count';
-      const nextValue = (word[field] || 0) + 1;
-      setWords((prev) => prev.map((w) => (w.id === id ? { ...w, [field]: nextValue } : w)));
-      const { error } = await supabase.from('words').update({ [field]: nextValue }).eq('id', id);
-      if (error) {
-        console.error('Failed to save answer stats:', error);
-        setStorageError(true);
-      }
-    },
-    [words]
-  );
-
+  // wrong_count. The backend reads the current value and writes it back; fine
+  // for single-user use, not built for concurrent editors.
+  const recordAnswer = useCallback(async (id, isCorrect) => {
+    const field = isCorrect ? 'correct_count' : 'wrong_count';
+    // Bump the count locally first so the card reacts instantly, then settle on
+    // whatever the server actually saved.
+    setWords((prev) => prev.map((w) => (w.id === id ? { ...w, [field]: (w[field] || 0) + 1 } : w)));
+    const { data, error } = await api.recordAnswer(id, isCorrect);
+    if (error || !data) {
+      console.error('Failed to save answer stats:', error);
+      setStorageError(true);
+      return;
+    }
+    setStorageError(false);
+    setWords((prev) => prev.map((w) => (w.id === id ? { ...w, ...data } : w)));
+  }, []);
 
   const deleteWord = useCallback(async (id) => {
-    const { error } = await supabase.from('words').delete().eq('id', id);
+    const { error } = await api.deleteWord(id);
     if (error) {
       setStorageError(true);
       return;
@@ -629,15 +589,7 @@ export default function App() {
 
   const linkWords = useCallback(async (idA, idB) => {
     if (idA === idB) return;
-    const { error } = await supabase
-      .from('word_links')
-      .upsert(
-        [
-          { word_id: idA, related_word_id: idB },
-          { word_id: idB, related_word_id: idA },
-        ],
-        { onConflict: 'word_id,related_word_id' }
-      );
+    const { error } = await api.linkWords(idA, idB);
     if (error) {
       setStorageError(true);
       return;
@@ -653,12 +605,7 @@ export default function App() {
   }, []);
 
   const unlinkWords = useCallback(async (idA, idB) => {
-    const { error } = await supabase
-      .from('word_links')
-      .delete()
-      .or(
-        `and(word_id.eq.${idA},related_word_id.eq.${idB}),and(word_id.eq.${idB},related_word_id.eq.${idA})`
-      );
+    const { error } = await api.unlinkWords(idA, idB);
     if (error) {
       setStorageError(true);
       return;
@@ -673,46 +620,27 @@ export default function App() {
     );
   }, []);
 
-  // Finds an existing tag by name (case-insensitive) or creates it.
-  // Returns the tag id, or null on failure.
-  const ensureTag = useCallback(
-    async (name) => {
-      const clean = name.trim().toLowerCase();
-      if (!clean) return null;
-      const existing = tags.find((t) => t.name.toLowerCase() === clean);
-      if (existing) return existing.id;
-      const { data, error } = await supabase.from('tags').insert({ name: clean }).select('id, name').single();
-      if (error || !data) {
-        setStorageError(true);
-        return null;
-      }
-      setStorageError(false);
-      setTags((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
-      return data.id;
-    },
-    [tags]
-  );
-
-  const tagWord = useCallback(
-    async (wordId, tagName) => {
-      const tagId = await ensureTag(tagName);
-      if (!tagId) return;
-      const { error } = await supabase
-        .from('word_tags')
-        .upsert([{ word_id: wordId, tag_id: tagId }], { onConflict: 'word_id,tag_id' });
-      if (error) {
-        setStorageError(true);
-        return;
-      }
-      setStorageError(false);
-      setWords((prev) =>
-        prev.map((w) =>
-          w.id === wordId && !w.tagIds.includes(tagId) ? { ...w, tagIds: [...w.tagIds, tagId] } : w
-        )
-      );
-    },
-    [ensureTag]
-  );
+  // Tags a word by name. The backend creates the tag if it does not exist yet
+  // and tells us which tag it used, so we never guess an id here.
+  const tagWord = useCallback(async (wordId, tagName) => {
+    const { data, error } = await api.tagWord(wordId, tagName);
+    if (error || !data?.tag) {
+      setStorageError(true);
+      return;
+    }
+    setStorageError(false);
+    const { tag } = data;
+    setTags((prev) =>
+      prev.some((t) => t.id === tag.id)
+        ? prev
+        : [...prev, tag].sort((a, b) => a.name.localeCompare(b.name))
+    );
+    setWords((prev) =>
+      prev.map((w) =>
+        w.id === wordId && !w.tagIds.includes(tag.id) ? { ...w, tagIds: [...w.tagIds, tag.id] } : w
+      )
+    );
+  }, []);
 
   // Adds the main word, then any selected related words (e.g. picked from
   // the Wiktionary related-words list) — reusing an existing dictionary
@@ -840,11 +768,7 @@ export default function App() {
   );
 
   const untagWord = useCallback(async (wordId, tagId) => {
-    const { error } = await supabase
-      .from('word_tags')
-      .delete()
-      .eq('word_id', wordId)
-      .eq('tag_id', tagId);
+    const { error } = await api.untagWord(wordId, tagId);
     if (error) {
       setStorageError(true);
       return;
