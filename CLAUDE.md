@@ -23,10 +23,13 @@ frontend with no backend to call, i.e. a broken site. Merge only after picking a
 place to run `backend/` and pointing `VITE_API_URL` at it.
 
 Consequences while that is true:
-- The root `Dockerfile` (the release image) builds and runs the whole app —
-  built site plus API in one container, see "Running the release version in
-  Docker" below. What is still missing is only the hosting decision itself:
-  where that container runs, and the login that has to sit in front of it.
+- There is one `Dockerfile`, at the repo root, and it covers both ways of
+  running the app: `--target dev` builds the development image (what
+  `run_dev.sh` uses), and the plain build produces the release image — built
+  site plus API in one container, see "Running the release version in Docker"
+  below. The old `dev/` folder is gone; run `./run_dev.sh --rebuild` once after
+  this change. What is still missing is only the hosting decision itself: where
+  that container runs, and the login that has to sit in front of it.
 - `recordAnswer` used to leave the error banner stuck after one failed save (it
   never cleared `storageError` on success). Rewriting it for the API fixed that
   as a side effect.
@@ -118,10 +121,10 @@ Conventions worth keeping:
 
 ## Running the release version in Docker
 
-The root `Dockerfile` builds one image that contains everything: Vite builds the
-site, and the Express backend serves those files itself, next to `/api`. So the
-site and the API answer on the same port, and the browser keeps calling `/api`
-with relative addresses — `VITE_API_URL` is not needed.
+The root `Dockerfile`'s last stage builds one image that contains everything:
+Vite builds the site, and the Express backend serves those files itself, next to
+`/api`. So the site and the API answer on the same port, and the browser keeps
+calling `/api` with relative addresses — `VITE_API_URL` is not needed.
 
 Nothing is baked in at build time. All settings are handed to the container when
 it starts:
@@ -129,14 +132,19 @@ it starts:
 ```
 docker build -t srb-cards .
 docker run --rm --name srb-cards-prod \
-  --env-file .env -e PORT=8080 \
-  -p 127.0.0.1:8080:8080 srb-cards
-# http://localhost:8080
+  --env-file .env -p 127.0.0.1:3000:3000 srb-cards
+# http://localhost:3000
 ```
 
-- `-e PORT=8080` is there because `.env` sets `PORT=3000` for development. Drop
-  it and the app listens on 3000 instead, so the mapping becomes
-  `-p 127.0.0.1:8080:3000`.
+- **The port is 3000 everywhere** — that is what `.env` says and what the
+  backend defaults to, so `--env-file .env` on its own is enough and there is
+  nothing to override. The image deliberately does *not* set its own `PORT`: a
+  `PORT` coming from the environment always wins over one set in the Dockerfile,
+  so a different default there would leave the app listening on a port nothing
+  talks to. That mismatch is what makes a proxy in front of the container answer
+  `502 Bad Gateway`.
+- A host that supplies its own `PORT` is honoured automatically — the backend
+  reads it and binds `0.0.0.0`.
 - The ports are published on **`127.0.0.1` only**, for the same reason as in
   development: this container holds the `service_role` key and has no login, so
   it must not be reachable from outside the machine. Do not publish it on a

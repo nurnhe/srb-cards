@@ -62,7 +62,7 @@ fi
 # Build the image if it is missing (or if asked to rebuild).
 if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "Собираю образ $IMAGE… / Building image $IMAGE…"
-  docker build -f dev/Dockerfile -t "$IMAGE" .
+  docker build --target dev -t "$IMAGE" .
 fi
 
 container_state() {
