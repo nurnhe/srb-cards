@@ -1,28 +1,64 @@
-# Multi-stage build: Node builds the static site, nginx serves it.
-# Mirrors what Netlify does (npm run build -> publish dist/).
+# One image definition for both ways of running the app.
+#
+#   development: docker build --target dev -t srb-cards-dev .   (run_dev.sh does this)
+#   release:     docker build -t srb-cards .
+#
+# Nothing is configured at build time. The site calls /api with relative URLs,
+# so the Supabase credentials and the port are read at container START:
+#   docker run --env-file .env -p 127.0.0.1:3000:3000 srb-cards
 
-FROM node:22-alpine AS build
+FROM node:22-alpine AS deps
 
 WORKDIR /app
 
-# Install dependencies first so this layer is cached across source edits.
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# Vite inlines VITE_* variables into the bundle at BUILD time, so they have to
-# be passed to `docker build --build-arg`, not to `docker run -e`.
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_ANON_KEY
-ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
-ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+COPY backend/package.json backend/package-lock.json ./backend/
+RUN cd backend && npm ci
 
-COPY . .
+
+# Development. No source is copied — it arrives at run time through a bind mount
+# (see run_dev.sh), so edits are live and nothing has to be rebuilt unless a
+# package.json changes. The dependencies installed above are masked back over the
+# bind mount with anonymous volumes, so the container always uses its own
+# Linux-built ones instead of whatever the host has.
+FROM deps AS dev
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# 5173 = Vite dev server, 3000 = Express API
+EXPOSE 5173 3000
+
+CMD ["/usr/local/bin/entrypoint.sh"]
+
+
+# Release build: Vite turns the source into a static site in /app/dist.
+FROM deps AS build
+
+COPY index.html vite.config.js ./
+COPY src ./src
 RUN npm run build
 
 
-FROM nginx:alpine
+# Release image: the Express backend serves that built site itself, alongside
+# /api, so one container on one port answers everything.
+FROM node:22-alpine AS release
 
-COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+WORKDIR /app
+ENV NODE_ENV=production
 
-EXPOSE 8080
+COPY backend/package.json backend/package-lock.json ./backend/
+RUN cd backend && npm ci --omit=dev
+
+COPY backend/src ./backend/src
+COPY --from=build /app/dist ./dist
+
+# No ENV PORT here on purpose: server.js already defaults to 3000, which is what
+# .env says. A different default here would be silently overridden by PORT from
+# the environment, leaving the app listening on a port nothing talks to.
+EXPOSE 3000
+
+USER node
+CMD ["node", "backend/src/server.js"]
