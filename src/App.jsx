@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload } from 'lucide-react';
+import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload, Table2 } from 'lucide-react';
 import * as api from './api';
 import {
   otherScript,
@@ -1387,6 +1387,9 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
   const [linkQuery, setLinkQuery] = useState('');
   const [taggingId, setTaggingId] = useState(null); // word currently picking/creating a tag
   const [tagQuery, setTagQuery] = useState('');
+  const [inflectionId, setInflectionId] = useState(null); // word currently showing its declension/conjugation table
+  const [inflectionTables, setInflectionTables] = useState(null);
+  const [inflectionState, setInflectionState] = useState('idle'); // idle | loading | notfound | error
   const [activeTagFilter, setActiveTagFilter] = useState(new Set()); // Set of tag ids; empty = all
   const [sortMode, setSortMode] = useState('alpha'); // alpha | hardest
   const [searchQuery, setSearchQuery] = useState('');
@@ -1469,6 +1472,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     setEditExample(w.example || '');
     setLinkingId(null);
     setTaggingId(null);
+    setInflectionId(null);
   };
 
   const saveEdit = () => {
@@ -1483,6 +1487,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     setLinkQuery('');
     setEditingId(null);
     setTaggingId(null);
+    setInflectionId(null);
   };
 
   const startTagging = (id) => {
@@ -1490,6 +1495,36 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     setTagQuery('');
     setEditingId(null);
     setLinkingId(null);
+    setInflectionId(null);
+  };
+
+  // Toggles the declension/conjugation table for a word — reuses
+  // fetchInflectionTables (same Wiktionary lookup as Add Word). Only one
+  // word's table shows at a time, same pattern as edit/link/tag.
+  const toggleInflection = async (id, sr) => {
+    if (inflectionId === id) {
+      setInflectionId(null);
+      return;
+    }
+    setInflectionId(id);
+    setEditingId(null);
+    setLinkingId(null);
+    setTaggingId(null);
+    setInflectionTables(null);
+    setInflectionState('loading');
+    try {
+      const found = await fetchInflectionTables(sr);
+      if (found) {
+        setInflectionTables(found);
+        setInflectionState('idle');
+      } else {
+        setInflectionTables(null);
+        setInflectionState('notfound');
+      }
+    } catch (e) {
+      setInflectionTables(null);
+      setInflectionState('error');
+    }
   };
 
   return (
@@ -1745,6 +1780,15 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
                   <WordStats correct={w.correct_count} wrong={w.wrong_count} />
                   <div className="flex gap-1">
                     <button
+                      onClick={() => toggleInflection(w.id, w.sr)}
+                      className="p-2 rounded-md"
+                      style={{ color: inflectionId === w.id ? '#D4A54A' : '#8892AE' }}
+                      aria-label="Прикажи промене по падежима/лицима"
+                      title="Прикажи промене по падежима/лицима (Wiktionary, може не наћи ништа)"
+                    >
+                      <Table2 size={15} />
+                    </button>
+                    <button
                       onClick={() => startTagging(w.id)}
                       className="p-2 rounded-md"
                       style={{ color: '#8892AE' }}
@@ -1810,6 +1854,25 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
                 }}
                 onCancel={() => setTaggingId(null)}
               />
+            )}
+
+            {inflectionId === w.id && (
+              <div className="rounded-lg p-3" style={{ background: '#12192E', border: '1px solid #3A4570' }}>
+                {inflectionState === 'loading' && (
+                  <p className="flex items-center gap-1.5" style={{ color: '#8892AE', fontSize: '0.78rem' }}>
+                    <Loader2 size={13} className="animate-spin" /> тражим…
+                  </p>
+                )}
+                {inflectionState === 'notfound' && (
+                  <p style={{ color: '#8892AE', fontSize: '0.78rem' }}>
+                    Ништа нађено на Wiktionary-ју — реч можда тамо не постоји или нема наведену табелу.
+                  </p>
+                )}
+                {inflectionState === 'error' && (
+                  <p style={{ color: '#8892AE', fontSize: '0.78rem' }}>Претрага тренутно није доступна.</p>
+                )}
+                {inflectionState === 'idle' && inflectionTables && <InflectionTables tables={inflectionTables} />}
+              </div>
             )}
           </div>
         );
