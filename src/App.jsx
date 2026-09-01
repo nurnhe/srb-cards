@@ -1969,6 +1969,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
 function TagFilterPill({ active, label, onClick }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       className="px-2.5 py-1 rounded-full text-xs"
       style={{
