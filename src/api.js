@@ -10,14 +10,48 @@
 // VITE_API_URL once the backend is deployed somewhere.
 const BASE = import.meta.env.VITE_API_URL || '';
 
+const PASSWORD_STORAGE_KEY = 'srbCardsAppPassword';
+
+export const getStoredPassword = () => localStorage.getItem(PASSWORD_STORAGE_KEY);
+export const logout = () => localStorage.removeItem(PASSWORD_STORAGE_KEY);
+
+// Verifies a typed password against the backend before storing it, so the
+// caller gets a clear yes/no rather than inferring success from some other
+// endpoint's side effect.
+export async function login(password) {
+  const res = await fetch(`${BASE}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (res.ok) {
+    localStorage.setItem(PASSWORD_STORAGE_KEY, password);
+    return true;
+  }
+  return false;
+}
+
 async function request(path, { method = 'GET', body } = {}) {
   try {
+    const password = getStoredPassword();
     const res = await fetch(`${BASE}/api${path}`, {
       method,
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      headers: {
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(password ? { 'X-App-Password': password } : {}),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
 
+    if (res.status === 401) {
+      // The stored password is missing/stale (e.g. changed on the server) —
+      // drop it and reload so the app falls back to the login screen instead
+      // of sitting on a dead session showing the generic save-failed banner
+      // forever.
+      logout();
+      window.location.reload();
+      return { data: null, error: new Error('Unauthorized') };
+    }
     if (!res.ok) {
       const payload = await res.json().catch(() => null);
       return { data: null, error: new Error(payload?.error || `HTTP ${res.status}`) };
