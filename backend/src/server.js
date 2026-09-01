@@ -5,14 +5,16 @@ import { fileURLToPath } from 'node:url';
 import vocabulary from './routes/vocabulary.js';
 import words from './routes/words.js';
 import links from './routes/links.js';
+import { requireAppPassword, login } from './auth.js';
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
-app.use('/api/vocabulary', vocabulary);
-app.use('/api/words', words);
-app.use('/api/links', links);
+app.post('/api/login', login);
+app.use('/api/vocabulary', requireAppPassword, vocabulary);
+app.use('/api/words', requireAppPassword, words);
+app.use('/api/links', requireAppPassword, links);
 
 // In the release image the built site sits next to the backend and is served by
 // this same process, so the site and the API share one origin — which is why the
@@ -41,8 +43,9 @@ app.use((err, req, res, next) => {
 const port = Number(process.env.PORT) || 3000;
 
 // Binds to all interfaces so Docker can publish the port. run_dev.sh publishes
-// it on 127.0.0.1 only — this backend holds the service_role key and has no
-// auth, so it must not be reachable from outside the machine.
+// it on 127.0.0.1 only for local dev regardless — this backend holds the
+// service_role key, and even with APP_PASSWORD set, binding to localhost is
+// one less thing to think about while developing.
 app.listen(port, '0.0.0.0', () => {
   console.log(`API listening on http://localhost:${port}`);
 });

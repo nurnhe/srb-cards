@@ -36,13 +36,19 @@ Consequences while that is true:
 
 ### Security — the service_role key
 
-The backend uses Supabase's `service_role` key, which **bypasses RLS entirely**,
-and the backend itself has no login. That is fine bound to localhost in Docker,
-which is why `run_dev.sh` publishes the ports on `127.0.0.1` only.
+The backend uses Supabase's `service_role` key, which **bypasses RLS entirely**.
+It sits behind a single shared password (`APP_PASSWORD` in `.env`, checked in
+`backend/src/auth.js`) — every `/api/*` data route except `/api/health` and
+`/api/login` requires an `X-App-Password` header matching it. Not per-user
+accounts, just one household password, which matches the app's low-stakes
+personal scale. The frontend asks for it once (`PasswordGate` in `App.jsx`),
+stores it in `localStorage`, and sends it on every request via `src/api.js`.
 
-Do not expose this backend to the internet until it has auth in front of it. And
-never rename the key to anything starting with `VITE_` — Vite bakes `VITE_*`
-variables into the JavaScript, which would publish it to every visitor.
+Even with that password check, keep the ports bound to localhost in Docker —
+which is why `run_dev.sh` publishes them on `127.0.0.1` only — and never
+rename the service_role key to anything starting with `VITE_`. Vite bakes
+`VITE_*` variables into the JavaScript, which would publish it to every
+visitor.
 
 ## Local dev
 

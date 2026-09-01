@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload, Table2 } from 'lucide-react';
+import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload, Table2, LogOut } from 'lucide-react';
 import * as api from './api';
 import {
   otherScript,
@@ -615,6 +615,71 @@ function VariantsEditor({ variants, onChange, srWord }) {
   );
 }
 
+function PasswordGate({ onAuthed }) {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState(false);
+  const [checking, setChecking] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!password || checking) return;
+    setChecking(true);
+    setError(false);
+    const ok = await api.login(password);
+    setChecking(false);
+    if (ok) {
+      onAuthed();
+    } else {
+      setError(true);
+    }
+  };
+
+  return (
+    <div
+      className="min-h-screen w-full flex items-center justify-center px-5"
+      style={{ background: '#12192E', fontFamily: FONT_BODY }}
+    >
+      <form
+        onSubmit={submit}
+        className="w-full rounded-xl p-6"
+        style={{ maxWidth: 340, background: '#1B2440', border: '1px solid #2A3355' }}
+      >
+        <h1
+          className="text-center mb-5"
+          style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1.3rem' }}
+        >
+          речи <span style={{ color: '#C41E3A', fontStyle: 'italic' }}>&amp;</span> слова
+        </h1>
+        <input
+          type="password"
+          autoFocus
+          value={password}
+          onChange={(e) => {
+            setPassword(e.target.value);
+            setError(false);
+          }}
+          placeholder="лозинка"
+          className="w-full rounded-lg px-3 py-2.5 mb-3 outline-none"
+          style={{ background: '#12192E', color: '#F5F1E8', border: '1px solid #2A3355' }}
+        />
+        {error && (
+          <div className="text-sm text-center mb-3" style={{ color: '#E8A0A8' }}>
+            Погрешна лозинка
+          </div>
+        )}
+        <button
+          type="submit"
+          disabled={checking}
+          className="w-full rounded-lg py-2.5 font-medium"
+          style={{ background: '#C41E3A', color: '#F5F1E8', opacity: checking ? 0.7 : 1 }}
+        >
+          {checking ? 'Проверавам…' : 'Улаз'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export default function App() {
   useGoogleFonts();
 
@@ -623,6 +688,10 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [tab, setTab] = useState('practice');
+  // Starts true if a password is already stored from a previous session —
+  // wrong/stale ones get caught and cleared by api.js's 401 handling on the
+  // first real request, not here.
+  const [authed, setAuthed] = useState(() => !!api.getStoredPassword());
 
   const reloadAll = useCallback(async () => {
     // One request: the backend runs the four queries and stitches relatedIds
@@ -637,14 +706,15 @@ export default function App() {
     setWords(data.words || []);
   }, []);
 
-  // load words + links + tags from the backend on mount
+  // load words + links + tags from the backend on mount, once authed
   useEffect(() => {
+    if (!authed) return;
     (async () => {
       await reloadAll();
       setReady(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [authed]);
 
   const addWord = useCallback(async (sr, ru, example) => {
     const { data, error } = await api.createWord(sr, ru, example);
@@ -892,13 +962,17 @@ export default function App() {
     );
   }, []);
 
+  if (!authed) {
+    return <PasswordGate onAuthed={() => setAuthed(true)} />;
+  }
+
   return (
     <div
       className="min-h-screen w-full"
       style={{ background: '#12192E', fontFamily: FONT_BODY }}
     >
       <div className="max-w-2xl mx-auto px-5 py-8">
-        <Header />
+        <Header onLogout={() => { api.logout(); setAuthed(false); setReady(false); }} />
         <TabBar tab={tab} setTab={setTab} count={words.length} />
 
         {!ready ? (
@@ -940,7 +1014,7 @@ export default function App() {
   );
 }
 
-function Header() {
+function Header({ onLogout }) {
   return (
     <div className="flex items-center gap-3 mb-7">
       <div
@@ -953,7 +1027,7 @@ function Header() {
       >
         <BookMarked size={20} color="#F5F1E8" strokeWidth={2} />
       </div>
-      <div>
+      <div className="flex-1">
         <h1
           style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1.5rem', lineHeight: 1.1 }}
         >
@@ -963,6 +1037,17 @@ function Header() {
           српски&nbsp;⇄&nbsp;руски речник
         </p>
       </div>
+      {onLogout && (
+        <button
+          type="button"
+          onClick={onLogout}
+          className="p-2 rounded-lg shrink-0"
+          style={{ color: '#8892AE' }}
+          title="Одјава"
+        >
+          <LogOut size={18} />
+        </button>
+      )}
     </div>
   );
 }
