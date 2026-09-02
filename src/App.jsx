@@ -2009,6 +2009,7 @@ function TagPicker({ word, allTags, tagById, query, onQueryChange, onPick, onCan
           }
         }}
         placeholder="нпр. храна, глаголи…"
+        autoComplete="off"
         className="w-full rounded-md px-3 py-1.5 text-sm outline-none mb-2"
         style={{ background: '#1B2440', color: '#F5F1E8', border: '1px solid #3A4570' }}
       />
@@ -2535,6 +2536,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
             }
           }}
           placeholder="претражи или направи нови таг…"
+          autoComplete="off"
           className="w-full rounded-lg px-3.5 py-2.5 mb-1.5 outline-none"
           style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
         />
