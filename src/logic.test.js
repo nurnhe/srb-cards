@@ -570,6 +570,15 @@ describe('isPlausibleRussianText', () => {
     expect(isPlausibleRussianText('')).toBe(false);
     expect(isPlausibleRussianText(undefined)).toBe(false);
   });
+
+  it('rejects Serbian Cyrillic text echoed back instead of a real translation', () => {
+    // ђ/ј/љ/њ/ћ/џ don't exist in the Russian alphabet at all — their
+    // presence means this is Serbian, not a genuine Russian translation,
+    // even though both scripts are Cyrillic and would otherwise pass.
+    expect(isPlausibleRussianText('љубав')).toBe(false); // "love" (sr)
+    expect(isPlausibleRussianText('ћутати')).toBe(false); // "to be silent" (sr)
+    expect(isPlausibleRussianText('џак')).toBe(false); // "sack" (sr)
+  });
 });
 
 describe('pickSerbianVoice', () => {

@@ -22,9 +22,18 @@ export function isRelevantTranslationMatch(match, inputWordCount) {
 // MyMemory occasionally returns text in the wrong language despite the
 // sr|ru langpair being requested (e.g. the English "sin" instead of the
 // Russian "грех" for the query "greh"). Genuine Russian text is always
-// Cyrillic, so this catches that without needing real language detection.
+// Cyrillic, so a plain non-Cyrillic check catches that without needing real
+// language detection — but Serbian is *also* written in Cyrillic, and the
+// two alphabets overlap almost completely, so that alone can't catch
+// MyMemory echoing the Serbian query back as if it were the translation.
+// ђ/ј/љ/њ/ћ/џ exist only in the Serbian Cyrillic alphabet, not the Russian
+// one — their presence is a reliable (if not exhaustive — plenty of real
+// Serbian words use only the shared letters) signal that this is Serbian
+// text, not a genuine Russian translation.
 export function isPlausibleRussianText(text) {
-  return isCyrillic(text || '');
+  const t = text || '';
+  if (!isCyrillic(t)) return false;
+  return !/[ђјљњћџ]/i.test(t);
 }
 
 // ---- Serbian Cyrillic ↔ Latin transliteration ----

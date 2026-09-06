@@ -94,7 +94,12 @@ async function fetchExample(srWord) {
 async function fetchRelatedWordsFromWiktionary(srWord) {
   const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
   const res = await fetch(url);
-  if (!res.ok) return null;
+  // A 404 genuinely means "no such page" — treated as not-found by callers.
+  // Anything else non-ok (429 rate-limited, a 5xx blip) is a different
+  // situation and should surface as an error state ("try again"), not get
+  // shown identically to "nothing exists for this word".
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Wiktionary request failed (${res.status})`);
   const html = await res.text();
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const heading = doc.getElementById('Serbo-Croatian');
@@ -136,7 +141,12 @@ async function fetchRelatedWordsFromWiktionary(srWord) {
 async function fetchIpaFromWiktionary(srWord) {
   const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
   const res = await fetch(url);
-  if (!res.ok) return null;
+  // A 404 genuinely means "no such page" — treated as not-found by callers.
+  // Anything else non-ok (429 rate-limited, a 5xx blip) is a different
+  // situation and should surface as an error state ("try again"), not get
+  // shown identically to "nothing exists for this word".
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Wiktionary request failed (${res.status})`);
   const html = await res.text();
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const heading = doc.getElementById('Serbo-Croatian');
@@ -159,7 +169,12 @@ async function fetchIpaFromWiktionary(srWord) {
 async function fetchInflectionTables(srWord) {
   const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
   const res = await fetch(url);
-  if (!res.ok) return null;
+  // A 404 genuinely means "no such page" — treated as not-found by callers.
+  // Anything else non-ok (429 rate-limited, a 5xx blip) is a different
+  // situation and should surface as an error state ("try again"), not get
+  // shown identically to "nothing exists for this word".
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Wiktionary request failed (${res.status})`);
   const html = await res.text();
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const heading = doc.getElementById('Serbo-Croatian');
@@ -399,7 +414,10 @@ function IpaText({ text, size = '0.75em' }) {
           if (!cancelled) setIpa(found || '');
         })
         .catch(() => {
-          ipaCache.set(key, '');
+          // Deliberately not cached — this was a transient failure (network
+          // blip, Wiktionary briefly erroring), not a real "no IPA exists"
+          // answer, and caching it here would suppress the display for this
+          // word for the rest of the tab session with no way to retry.
           if (!cancelled) setIpa('');
         });
     }, 400);
@@ -485,6 +503,13 @@ function VariantsEditor({ variants, onChange, srWord }) {
   const [draft, setDraft] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [suggestState, setSuggestState] = useState('idle'); // idle | loading | notfound | error
+  // srWord is a prop, not state this component sets itself — this ref tracks
+  // its latest value (no deps, so it updates after every render) so suggest()
+  // can tell a response apart from a newer request for a different word.
+  const srWordRef = useRef(srWord);
+  useEffect(() => {
+    srWordRef.current = srWord;
+  });
 
   const addVariant = (text) => {
     const t = text.trim().toLowerCase();
@@ -503,10 +528,15 @@ function VariantsEditor({ variants, onChange, srWord }) {
   };
 
   const suggest = async () => {
-    if (!srWord.trim()) return;
+    const word = srWord.trim();
+    if (!word) return;
     setSuggestState('loading');
     try {
-      const found = await fetchTranslationSuggestions(srWord.trim());
+      const found = await fetchTranslationSuggestions(word);
+      // The word field may have moved on to a different word while this was
+      // in flight — a slower, now-stale response must not overwrite
+      // suggestions for whatever's showing now.
+      if (srWordRef.current.trim() !== word) return;
       const fresh = found.filter((f) => !variants.some((v) => v.toLowerCase() === f.toLowerCase()));
       if (fresh.length === 0) {
         setSuggestState('notfound');
@@ -516,6 +546,7 @@ function VariantsEditor({ variants, onChange, srWord }) {
         setSuggestState('idle');
       }
     } catch (e) {
+      if (srWordRef.current.trim() !== word) return;
       setSuggestState('error');
       setSuggestions([]);
     }
@@ -700,19 +731,26 @@ export default function App() {
     const { data, error } = await api.getVocabulary();
     if (error || !data) {
       setStorageError(true);
-      return;
+      // api.js already called logout() + window.location.reload() for a 401
+      // before resolving with this same "Unauthorized" error — tell the
+      // caller so it doesn't flip the app to "ready" while that reload is
+      // still pending.
+      return { unauthorized: error?.message === 'Unauthorized' };
     }
     setStorageError(false);
     setTags(data.tags || []);
     setWords(data.words || []);
+    return { unauthorized: false };
   }, []);
 
   // load words + links + tags from the backend on mount, once authed
   useEffect(() => {
     if (!authed) return;
     (async () => {
-      await reloadAll();
-      setReady(true);
+      const { unauthorized } = await reloadAll();
+      // Rendering the normal app shell here would flash it for one frame
+      // right before the pending reload above actually navigates away.
+      if (!unauthorized) setReady(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
