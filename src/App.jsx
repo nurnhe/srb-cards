@@ -556,6 +556,7 @@ function VariantsEditor({ variants, onChange, srWord }) {
             }
           }}
           placeholder="упиши превод и Enter"
+          autoComplete="off"
           className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
           style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
         />
@@ -2328,6 +2329,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
             setInflectionState('idle');
           }}
           placeholder="нпр. хвала"
+          autoComplete="off"
           className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
           style={{ fontFamily: FONT_DISPLAY, fontSize: '1.05rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
         />
@@ -2438,6 +2440,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
                       value={sel.ru}
                       onChange={(e) => setRelatedTranslation(relSr, e.target.value)}
                       placeholder="превод (обавезно да би се додало)"
+                      autoComplete="off"
                       className="rounded-md px-2.5 py-1 outline-none flex-1"
                       style={{ fontSize: '0.82rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
                     />
@@ -2658,6 +2661,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
         value={example}
         onChange={(e) => setExample(e.target.value)}
         placeholder="нпр. Хвала на помоћи, много си љубазан."
+        autoComplete="off"
         className="w-full rounded-lg px-3.5 py-2.5 mt-0 mb-1 outline-none"
         style={{ fontFamily: FONT_BODY, fontSize: '0.9rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
       />
