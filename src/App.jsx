@@ -1096,6 +1096,10 @@ function Practice({ words, tags, onAnswer }) {
   // "deck" of word ids not yet shown in the current cycle, weighted toward
   // words with more wrong answers — see buildWeightedDeck.
   const deckRef = useRef([]);
+  // Always holds the current render's `next` (defined further down, after
+  // the pool/current early-returns) so the keydown listener below never
+  // closes over a stale `current`/`drawNext`.
+  const advanceRef = useRef(() => {});
 
   // A word must have ALL selected tags (intersection), not just any one
   // of them — selecting more tags narrows the pool.
@@ -1144,6 +1148,22 @@ function Practice({ words, tags, onAnswer }) {
   useEffect(() => {
     if (feedback === null && inputRef.current) inputRef.current.focus();
   }, [current, feedback]);
+
+  // Once feedback is shown, the answer input is gone — nothing is focused to
+  // catch Enter anymore, so listen on the window instead. Only active while
+  // feedback is showing, so it never interferes with Enter submitting the
+  // answer via the input's own handler.
+  useEffect(() => {
+    if (feedback === null) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        advanceRef.current();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [feedback]);
 
   if (words.length === 0) {
     return (
@@ -1206,6 +1226,7 @@ function Practice({ words, tags, onAnswer }) {
     setFeedback(null);
     setTypoForgiven(false);
   };
+  advanceRef.current = next;
 
   const switchDirection = (dir) => {
     setDirection(dir);
