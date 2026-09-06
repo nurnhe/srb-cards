@@ -732,11 +732,12 @@ export default function App() {
     const { data, error } = await api.updateWord(id, sr, ru, example);
     if (error || !data) {
       setStorageError(true);
-      return;
+      return null;
     }
     setStorageError(false);
     // Patch from the row the server saved — it is what lowercases sr/ru.
     setWords((prev) => prev.map((w) => (w.id === id ? { ...w, ...data } : w)));
+    return data;
   }, []);
 
   // Records a practice attempt for a word — increments correct_count or
@@ -1554,19 +1555,26 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
   const importBackup = async (file) => {
     setImportState('loading');
     setImportMessage('');
-    const text = await file.text();
-    const parsed = parseImportData(text);
-    if (!parsed.valid) {
+    try {
+      const text = await file.text();
+      const parsed = parseImportData(text);
+      if (!parsed.valid) {
+        setImportState('error');
+        setImportMessage(parsed.error);
+        return;
+      }
+      const stats = await onImport(parsed.words);
+      setImportState('done');
+      setImportMessage(
+        `Додато: ${stats.added}. Прескочено (већ постоји): ${stats.skipped}. Тагова додато: ${stats.tagged}. Веза додато: ${stats.linked}.` +
+          (stats.failed > 0 ? ` Није сачувано (грешка): ${stats.failed}.` : '')
+      );
+    } catch (e) {
+      // A read/parse failure left this stuck at 'loading' forever before —
+      // the import button stays disabled while loading, with no way out.
       setImportState('error');
-      setImportMessage(parsed.error);
-      return;
+      setImportMessage('Не могу да прочитам фајл.');
     }
-    const stats = await onImport(parsed.words);
-    setImportState('done');
-    setImportMessage(
-      `Додато: ${stats.added}. Прескочено (већ постоји): ${stats.skipped}. Тагова додато: ${stats.tagged}. Веза додато: ${stats.linked}.` +
-        (stats.failed > 0 ? ` Није сачувано (грешка): ${stats.failed}.` : '')
-    );
   };
 
   if (words.length === 0) {
@@ -1619,14 +1627,27 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     setInflectionId(null);
   };
 
-  const saveEdit = () => {
-    if (editSr.trim() && editRuVariants.length > 0) {
-      onUpdate(editingId, editSr, editRuVariants.join(', '), editExample);
+  const saveEdit = async () => {
+    if (!editSr.trim() || editRuVariants.length === 0) {
+      setEditingId(null);
+      return;
     }
-    setEditingId(null);
+    // Keep the panel open on failure — closing it unconditionally made a
+    // failed save look identical to a successful one, silently discarding
+    // the edit with only the generic storage-error banner as a clue.
+    const saved = await onUpdate(editingId, editSr, editRuVariants.join(', '), editExample);
+    if (saved) setEditingId(null);
   };
 
   const startLinking = (id) => {
+    // Clicking the icon for the word whose link panel is already open closes
+    // it, same as the inflection-table toggle — otherwise it looked like a
+    // close action but actually reopened the panel and silently wiped
+    // whatever search query was already typed.
+    if (linkingId === id) {
+      setLinkingId(null);
+      return;
+    }
     setLinkingId(id);
     setLinkQuery('');
     setEditingId(null);
@@ -1635,6 +1656,10 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
   };
 
   const startTagging = (id) => {
+    if (taggingId === id) {
+      setTaggingId(null);
+      return;
+    }
     setTaggingId(id);
     setTagQuery('');
     setEditingId(null);
@@ -2045,12 +2070,17 @@ function TagFilterPill({ active, label, onClick }) {
 
 function TagPicker({ word, allTags, tagById, query, onQueryChange, onPick, onCancel }) {
   const alreadyTagged = new Set(word.tagIds);
+  const q = query.trim().toLowerCase();
   const candidates = allTags
     .filter((t) => !alreadyTagged.has(t.id))
-    .filter((t) => !query.trim() || t.name.toLowerCase().includes(query.trim().toLowerCase()))
+    .filter((t) => !q || t.name.toLowerCase().includes(q))
     .slice(0, 6);
 
-  const exactExists = allTags.some((t) => t.name.toLowerCase() === query.trim().toLowerCase());
+  // A tag matching exactly what's typed, whether or not it's already on
+  // this word — distinct from "no such tag exists at all", which is what
+  // decides whether to offer creating a new one.
+  const matchingTag = q ? allTags.find((t) => t.name.toLowerCase() === q) : null;
+  const alreadyAppliedExact = matchingTag && alreadyTagged.has(matchingTag.id);
 
   return (
     <div className="rounded-lg p-3" style={{ background: '#12192E', border: '1px solid #3A4570' }}>
@@ -2062,7 +2092,10 @@ function TagPicker({ word, allTags, tagById, query, onQueryChange, onPick, onCan
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && query.trim()) {
+          // Previously fired regardless of alreadyAppliedExact, sending a
+          // pointless (if harmless) network request to re-apply a tag
+          // that's already there.
+          if (e.key === 'Enter' && query.trim() && !alreadyAppliedExact) {
             e.preventDefault();
             onPick(query.trim());
           }
@@ -2083,7 +2116,15 @@ function TagPicker({ word, allTags, tagById, query, onQueryChange, onPick, onCan
             {t.name}
           </button>
         ))}
-        {query.trim() && !exactExists && (
+        {alreadyAppliedExact && (
+          // Previously a silent dead end: candidates excludes already-
+          // applied tags and the old exactExists check (against ALL tags)
+          // also hid the "create new" option here, leaving nothing shown.
+          <div style={{ color: '#5C6690', fontSize: '0.8rem', padding: '4px 2px' }}>
+            Тај таг је већ додат.
+          </div>
+        )}
+        {query.trim() && !matchingTag && (
           <button
             onClick={() => onPick(query.trim())}
             className="text-left rounded-md px-2.5 py-1.5"
