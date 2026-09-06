@@ -771,12 +771,17 @@ export default function App() {
     );
   }, []);
 
+  // Returns whether the link was actually saved, so a caller doing several
+  // of these in a row (addWordWithRelated, importWords) can tell if any one
+  // of them failed — the global storageError flag alone can't, since a
+  // later success in the same batch would otherwise clear an earlier
+  // failure's flag before the user ever saw it.
   const linkWords = useCallback(async (idA, idB) => {
-    if (idA === idB) return;
+    if (idA === idB) return true;
     const { error } = await api.linkWords(idA, idB);
     if (error) {
       setStorageError(true);
-      return;
+      return false;
     }
     setStorageError(false);
     setWords((prev) =>
@@ -786,6 +791,7 @@ export default function App() {
         return w;
       })
     );
+    return true;
   }, []);
 
   const unlinkWords = useCallback(async (idA, idB) => {
@@ -805,12 +811,14 @@ export default function App() {
   }, []);
 
   // Tags a word by name. The backend creates the tag if it does not exist yet
-  // and tells us which tag it used, so we never guess an id here.
+  // and tells us which tag it used, so we never guess an id here. Returns
+  // whether it actually saved — see linkWords' comment for why callers
+  // doing several of these in a row need to know.
   const tagWord = useCallback(async (wordId, tagName) => {
     const { data, error } = await api.tagWord(wordId, tagName);
     if (error || !data?.tag) {
       setStorageError(true);
-      return;
+      return false;
     }
     setStorageError(false);
     const { tag } = data;
@@ -824,6 +832,7 @@ export default function App() {
         w.id === wordId && !w.tagIds.includes(tag.id) ? { ...w, tagIds: [...w.tagIds, tag.id] } : w
       )
     );
+    return true;
   }, []);
 
   // Adds the main word, then any selected related words (e.g. picked from
@@ -844,30 +853,44 @@ export default function App() {
     async (sr, ru, example, relatedSelections, mainTagNames) => {
       const mainWord = await addWord(sr, ru, example);
       if (!mainWord) return;
+      // Tracks words created earlier in this same call (like importWords'
+      // `known`) — checking against the closed-over `words` state alone
+      // would miss a related word just created a few iterations ago, since
+      // that state update hasn't landed yet, and create a duplicate row for
+      // it if the same word appears twice in relatedSelections.
+      let known = [...words, mainWord];
       const group = [mainWord];
       const relatedWithTags = [];
       for (const rel of relatedSelections || []) {
-        const existing = findDuplicateWord(rel.sr, words);
+        const existing = findDuplicateWord(rel.sr, known);
         if (!existing && (!rel.ru || !rel.ru.trim())) continue;
         const relatedWord = existing || (await addWord(rel.sr, rel.ru, null));
         if (relatedWord) {
+          if (!existing) known = [...known, relatedWord];
           group.push(relatedWord);
           relatedWithTags.push({ word: relatedWord, tagNames: rel.tagNames || [] });
         }
       }
+      // linkWords/tagWord each set the shared storageError flag on their own
+      // success/failure — in a run of several calls, a later success would
+      // otherwise silently clear an earlier failure's flag before anyone
+      // saw it. Track failures locally and restore the flag once at the end
+      // if anything in this batch didn't save.
+      let anyFailed = false;
       for (let i = 0; i < group.length; i++) {
         for (let j = i + 1; j < group.length; j++) {
-          await linkWords(group[i].id, group[j].id);
+          if (!(await linkWords(group[i].id, group[j].id))) anyFailed = true;
         }
       }
       for (const name of mainTagNames || []) {
-        await tagWord(mainWord.id, name);
+        if (!(await tagWord(mainWord.id, name))) anyFailed = true;
       }
       for (const { word, tagNames } of relatedWithTags) {
         for (const name of tagNames) {
-          await tagWord(word.id, name);
+          if (!(await tagWord(word.id, name))) anyFailed = true;
         }
       }
+      if (anyFailed) setStorageError(true);
     },
     [addWord, linkWords, tagWord, words]
   );
@@ -881,7 +904,7 @@ export default function App() {
   // then links (both need every word to already have an id).
   const importWords = useCallback(
     async (parsedWords) => {
-      const stats = { added: 0, skipped: 0, tagged: 0, linked: 0 };
+      const stats = { added: 0, skipped: 0, tagged: 0, linked: 0, failed: 0 };
       let known = words;
       const srToId = {};
       const resolveId = (srText) => {
@@ -925,8 +948,8 @@ export default function App() {
           taggedThisRun.add(key);
           const existingTagId = tagIdByName(tagName);
           if (existingTagId && word?.tagIds?.includes(existingTagId)) continue;
-          await tagWord(id, tagName);
-          stats.tagged++;
+          if (await tagWord(id, tagName)) stats.tagged++;
+          else stats.failed++;
         }
       }
 
@@ -941,11 +964,12 @@ export default function App() {
           if (linkedThisRun.has(key)) continue;
           linkedThisRun.add(key);
           if (word?.relatedIds?.includes(relId)) continue;
-          await linkWords(id, relId);
-          stats.linked++;
+          if (await linkWords(id, relId)) stats.linked++;
+          else stats.failed++;
         }
       }
 
+      if (stats.failed > 0) setStorageError(true);
       return stats;
     },
     [words, tags, addWord, tagWord, linkWords]
@@ -1540,7 +1564,8 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     const stats = await onImport(parsed.words);
     setImportState('done');
     setImportMessage(
-      `Додато: ${stats.added}. Прескочено (већ постоји): ${stats.skipped}. Тагова додато: ${stats.tagged}. Веза додато: ${stats.linked}.`
+      `Додато: ${stats.added}. Прескочено (већ постоји): ${stats.skipped}. Тагова додато: ${stats.tagged}. Веза додато: ${stats.linked}.` +
+        (stats.failed > 0 ? ` Није сачувано (грешка): ${stats.failed}.` : '')
     );
   };
 
@@ -2167,6 +2192,14 @@ function AddWord({ onAdd, goToList, words, tags }) {
   // tags can apply to different subsets. { [tagName]: Set<key> }
   const [tagExclusions, setTagExclusions] = useState({});
   const srRef = useRef(null);
+  // Lookups below are async and keyed to whatever `sr` was at the time they
+  // started — this tracks the *current* value so a response that resolves
+  // after the user has since changed the word can tell it's stale and back
+  // off, instead of silently repopulating state for a word no longer shown.
+  const srLiveRef = useRef('');
+  // Guards the related-word translation-suggestion fetch the same way, but
+  // per related word rather than per sr — see toggleRelatedSelection.
+  const relatedFetchSeqRef = useRef({});
 
   const addTagName = (name) => {
     const clean = name.trim().toLowerCase();
@@ -2232,19 +2265,47 @@ function AddWord({ onAdd, goToList, words, tags }) {
       }
       return { ...prev, [word]: { ru: '', status: 'loading' } };
     });
-    if (wasAlreadySelected || existing) return;
+    if (wasAlreadySelected) {
+      // Deselecting no longer means anything for this word's per-tag
+      // exclusions — drop it so it doesn't silently come back pre-excluded
+      // if the same word is selected again later in the same session.
+      setTagExclusions((prev) => {
+        let changed = false;
+        const next = {};
+        for (const [tagName, set] of Object.entries(prev)) {
+          if (set.has(word)) {
+            changed = true;
+            const copy = new Set(set);
+            copy.delete(word);
+            next[tagName] = copy;
+          } else {
+            next[tagName] = set;
+          }
+        }
+        return changed ? next : prev;
+      });
+      return;
+    }
+    if (existing) return;
+    const seq = (relatedFetchSeqRef.current[word] || 0) + 1;
+    relatedFetchSeqRef.current[word] = seq;
+    // Only apply the fetched suggestion if this is still the latest request
+    // for this word and the user hasn't already typed their own value —
+    // otherwise a slow response can silently clobber something newer.
+    const stillCurrent = (prev) =>
+      prev[word] && !prev[word].edited && relatedFetchSeqRef.current[word] === seq;
     try {
       const suggestions = await fetchTranslationSuggestions(word);
       setRelatedSelections((prev) =>
-        prev[word] ? { ...prev, [word]: { ru: suggestions[0] || '', status: 'idle' } } : prev
+        stillCurrent(prev) ? { ...prev, [word]: { ru: suggestions[0] || '', status: 'idle' } } : prev
       );
     } catch (e) {
-      setRelatedSelections((prev) => (prev[word] ? { ...prev, [word]: { ru: '', status: 'idle' } } : prev));
+      setRelatedSelections((prev) => (stillCurrent(prev) ? { ...prev, [word]: { ru: '', status: 'idle' } } : prev));
     }
   };
 
   const setRelatedTranslation = (word, ru) => {
-    setRelatedSelections((prev) => (prev[word] ? { ...prev, [word]: { ...prev[word], ru } } : prev));
+    setRelatedSelections((prev) => (prev[word] ? { ...prev, [word]: { ...prev[word], ru, edited: true } } : prev));
   };
 
   const submit = (e) => {
@@ -2257,6 +2318,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
     }));
     const mainTagNames = selectedTagNames.filter((name) => !tagExclusions[name]?.has('__main__'));
     onAdd(sr, ruVariants.join(', '), example, relatedToAdd, mainTagNames);
+    srLiveRef.current = '';
     setSr('');
     setRuVariants([]);
     setExample('');
@@ -2267,16 +2329,24 @@ function AddWord({ onAdd, goToList, words, tags }) {
     setSelectedTagNames([]);
     setTagQuery('');
     setTagExclusions({});
+    setInflectionTables(null);
+    setInflectionState('idle');
     setJustAdded(true);
     setTimeout(() => setJustAdded(false), 1600);
     srRef.current?.focus();
   };
 
   const lookupRelatedWords = async () => {
-    if (!sr.trim()) return;
+    const word = sr.trim();
+    if (!word) return;
     setRelatedState('loading');
     try {
-      const found = await fetchRelatedWordsFromWiktionary(sr.trim());
+      const found = await fetchRelatedWordsFromWiktionary(word);
+      // The word field may have changed while this was in flight — a late
+      // response for a word no longer shown must not overwrite what's
+      // currently on screen (and, if submitted, get attached to the wrong
+      // word).
+      if (srLiveRef.current !== word) return;
       if (found) {
         setRelatedWords(found);
         setRelatedState('idle');
@@ -2294,6 +2364,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
         setRelatedSelections({});
       }
     } catch (e) {
+      if (srLiveRef.current !== word) return;
       setRelatedWords([]);
       setRelatedState('error');
       setRelatedSelections({});
@@ -2301,10 +2372,12 @@ function AddWord({ onAdd, goToList, words, tags }) {
   };
 
   const lookupInflectionTables = async () => {
-    if (!sr.trim()) return;
+    const word = sr.trim();
+    if (!word) return;
     setInflectionState('loading');
     try {
-      const found = await fetchInflectionTables(sr.trim());
+      const found = await fetchInflectionTables(word);
+      if (srLiveRef.current !== word) return;
       if (found) {
         setInflectionTables(found);
         setInflectionState('idle');
@@ -2313,16 +2386,19 @@ function AddWord({ onAdd, goToList, words, tags }) {
         setInflectionState('notfound');
       }
     } catch (e) {
+      if (srLiveRef.current !== word) return;
       setInflectionTables(null);
       setInflectionState('error');
     }
   };
 
   const lookupExample = async () => {
-    if (!sr.trim()) return;
+    const word = sr.trim();
+    if (!word) return;
     setLookupState('loading');
     try {
-      const found = await fetchExample(sr.trim());
+      const found = await fetchExample(word);
+      if (srLiveRef.current !== word) return;
       if (found) {
         setExample(found);
         setLookupState('idle');
@@ -2330,6 +2406,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
         setLookupState('notfound');
       }
     } catch (e) {
+      if (srLiveRef.current !== word) return;
       setLookupState('error');
     }
   };
@@ -2350,16 +2427,19 @@ function AddWord({ onAdd, goToList, words, tags }) {
           ref={srRef}
           value={sr}
           onChange={(e) => {
+            srLiveRef.current = e.target.value.trim();
             setSr(e.target.value);
-            // the shown related-words list is only valid for the word it
-            // was looked up for — clear it so stale results from a
-            // previous word can't be mistaken for this one's
+            // Everything below is only valid for the word it was looked up
+            // for — clear it all so stale results from a previous word
+            // can't be mistaken for (or saved under) this one's.
             setRelatedWords([]);
             setRelatedState('idle');
             setRelatedSelections({});
             setTagExclusions({});
             setInflectionTables(null);
             setInflectionState('idle');
+            setExample('');
+            setLookupState('idle');
           }}
           placeholder="нпр. хвала"
           autoComplete="off"
