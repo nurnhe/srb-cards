@@ -1316,7 +1316,16 @@ function Practice({ words, tags, onAnswer }) {
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && checkAnswer()}
+              onKeyDown={(e) => {
+                // Stops this same keypress from also reaching the
+                // feedback-screen advance listener below — otherwise the
+                // Enter that submits the answer can double as the Enter
+                // that skips past showing it.
+                if (e.key === 'Enter') {
+                  e.stopPropagation();
+                  checkAnswer();
+                }
+              }}
               placeholder={`превод (${answerLabel.toLowerCase()})`}
               className="w-full max-w-xs text-center rounded-lg py-2.5 px-4 outline-none"
               style={{
