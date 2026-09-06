@@ -12,27 +12,15 @@ this app stores her vocabulary and quizzes her on it.
   `/api/*` through `src/api.js`.
 - Data: Supabase (Postgres). Credentials come from `SUPABASE_URL` /
   `SUPABASE_SERVICE_ROLE_KEY`, read only by the backend (`backend/src/supabase.js`).
-- Hosting: **`main` only.** Netlify auto-deploys pushes to `main`, which still
-  has the old browser-talks-to-Supabase code and still works.
+- Hosting: production is **https://srb.cloudopen.space/** — the backend
+  refactor is merged into `main` and that's what's running there. Deploy is
+  **manual**: pushing to `main` does not auto-deploy anything. There is no
+  Netlify deploy anymore.
 
-### Branch state — read this first
-
-The backend lives on `refactor/add_backend` and is **deliberately not merged**.
-No host has been chosen for it yet, so merging it to `main` would deploy a
-frontend with no backend to call, i.e. a broken site. Merge only after picking a
-place to run `backend/` and pointing `VITE_API_URL` at it.
-
-Consequences while that is true:
-- There is one `Dockerfile`, at the repo root, and it covers both ways of
-  running the app: `--target dev` builds the development image (what
-  `run_dev.sh` uses), and the plain build produces the release image — built
-  site plus API in one container, see "Running the release version in Docker"
-  below. The old `dev/` folder is gone; run `./run_dev.sh --rebuild` once after
-  this change. What is still missing is only the hosting decision itself: where
-  that container runs, and the login that has to sit in front of it.
-- `recordAnswer` used to leave the error banner stuck after one failed save (it
-  never cleared `storageError` on success). Rewriting it for the API fixed that
-  as a side effect.
+There is one `Dockerfile`, at the repo root, covering both ways of running the
+app: `--target dev` builds the development image (what `run_dev.sh` uses), and
+the plain build produces the release image — built site plus API in one
+container, see "Running the release version in Docker" below.
 
 ### Security — the service_role key
 
@@ -82,12 +70,11 @@ Running without Docker also works (`npm install && npm run dev` plus
 `WebSocket`. The container pins `node:22-alpine`, so `./run_dev.sh` is the path
 that always works.
 
-Deploy flow (for `main` as it stands today): commit + push to `main` → Netlify
-auto-builds (`npm run build`, publish dir `dist`) → live. Netlify env vars (Site
-configuration → Environment variables) must mirror `.env` — a stale value there
-is a common source of "works locally, broken in prod" bugs. Netlify build
-settings must have Build command `npm run build` and Publish directory `dist`,
-or it silently serves unbuilt source instead of running Vite.
+Deploy to production (https://srb.cloudopen.space/) is a **manual step Kira
+does herself** — pushing to `main` does not trigger anything automatically.
+Don't tell her a merge is "live"; it's live once she's deployed it. See
+"Running the release version in Docker" below for the release build itself —
+that's the image that ends up running in production.
 
 ## The API
 
@@ -169,9 +156,10 @@ docker run --rm --name srb-cards-prod \
 - **tags** / **word_tags**: many-to-many tagging, same cascade-delete pattern
 - Any new table needs RLS enabled + a `using (true) with check (true)` policy
   to match the existing open-access pattern, unless deliberately changing
-  that trade-off. Note the backend's `service_role` key bypasses RLS entirely,
-  so those policies now only matter to `main` (which still uses the anon key
-  from the browser) — keep them until this branch is merged and hosted.
+  that trade-off. The backend's `service_role` key bypasses RLS entirely, so
+  these policies don't gate the app anymore — they're just a floor in case
+  anything ever queries with the anon key again (e.g. from the Supabase
+  dashboard or a future browser-side call).
 
 Schema changes ship as raw SQL Kira runs herself in Supabase's SQL Editor —
 there's no migration tool/history. When adding a column or table, give her
