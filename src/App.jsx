@@ -618,20 +618,25 @@ function VariantsEditor({ variants, onChange, srWord }) {
 
 function PasswordGate({ onAuthed }) {
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(false);
+  const [error, setError] = useState(null); // null | 'wrong' | 'network'
   const [checking, setChecking] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
     if (!password || checking) return;
     setChecking(true);
-    setError(false);
-    const ok = await api.login(password);
-    setChecking(false);
-    if (ok) {
-      onAuthed();
-    } else {
-      setError(true);
+    setError(null);
+    try {
+      const { ok, networkError } = await api.login(password);
+      if (ok) {
+        onAuthed();
+      } else {
+        setError(networkError ? 'network' : 'wrong');
+      }
+    } finally {
+      // Always runs, even if api.login() itself throws unexpectedly — the
+      // button must never stay stuck on "Проверавам…" with no way out.
+      setChecking(false);
     }
   };
 
@@ -657,7 +662,7 @@ function PasswordGate({ onAuthed }) {
           value={password}
           onChange={(e) => {
             setPassword(e.target.value);
-            setError(false);
+            setError(null);
           }}
           placeholder="лозинка"
           className="w-full rounded-lg px-3 py-2.5 mb-3 outline-none"
@@ -665,7 +670,7 @@ function PasswordGate({ onAuthed }) {
         />
         {error && (
           <div className="text-sm text-center mb-3" style={{ color: '#E8A0A8' }}>
-            Погрешна лозинка
+            {error === 'network' ? 'Нема везе са сервером — покушај поново' : 'Погрешна лозинка'}
           </div>
         )}
         <button
