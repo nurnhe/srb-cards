@@ -1,9 +1,15 @@
 import { Router } from 'express';
 import { supabase } from '../supabase.js';
 import { ensureTag } from '../tags.js';
-import { route, fail, cleanWordFields, WORD_COLUMNS } from '../http.js';
+import { route, fail, cleanWordFields, WORD_COLUMNS, isValidId } from '../http.js';
 
 const router = Router();
+
+// Applied to every route below that takes an id in the URL — a malformed
+// one (not a real uuid) is a client-side mistake, not a database error.
+router.param('id', (req, res, next, id) => (isValidId(id) ? next() : res.status(400).json({ error: 'invalid id' })));
+router.param('wordId', (req, res, next, id) => (isValidId(id) ? next() : res.status(400).json({ error: 'invalid id' })));
+router.param('tagId', (req, res, next, id) => (isValidId(id) ? next() : res.status(400).json({ error: 'invalid id' })));
 
 router.post(
   '/',
@@ -29,14 +35,19 @@ router.patch(
     }
 
     // Returns the saved row so the browser updates its state from what actually
-    // landed in the database rather than re-deriving it.
+    // landed in the database rather than re-deriving it. maybeSingle (rather
+    // than single) resolves with data: null and no error when the id simply
+    // doesn't match any row, instead of Postgrest's ambiguous "no rows"
+    // error — letting a stale/deleted id return a clean 404 instead of a
+    // generic 500.
     const { data, error } = await supabase
       .from('words')
       .update(fields)
       .eq('id', req.params.id)
       .select(WORD_COLUMNS)
-      .single();
-    if (error || !data) return fail(res, 'PATCH /api/words/:id', error);
+      .maybeSingle();
+    if (error) return fail(res, 'PATCH /api/words/:id', error);
+    if (!data) return fail(res, 'PATCH /api/words/:id', new Error('Word not found'), 404);
 
     res.json(data);
   })
