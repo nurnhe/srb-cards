@@ -1210,7 +1210,7 @@ function Practice({ words, tags, onAnswer }) {
   const answerLabel = direction === 'sr-ru' ? 'РУССКИЙ' : 'СРПСКИ';
 
   const checkAnswer = () => {
-    if (!current || feedback) return;
+    if (!current || feedback || !input.trim()) return;
     const isCorrect = isAnswerCorrect(direction, current, input);
     setFeedback(isCorrect ? 'correct' : 'wrong');
     setTypoForgiven(isCorrect && isTypoCorrected(direction, current, input));
