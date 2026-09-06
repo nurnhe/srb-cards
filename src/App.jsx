@@ -1151,15 +1151,18 @@ function Practice({ words, tags, onAnswer }) {
 
   // Once feedback is shown, the answer input is gone — nothing is focused to
   // catch Enter anymore, so listen on the window instead. Only active while
-  // feedback is showing, so it never interferes with Enter submitting the
-  // answer via the input's own handler.
+  // feedback is showing. Backs off whenever something specific already has
+  // focus (a tag pill, the direction toggle, a tab, the "Следећа реч" button
+  // itself) so Enter still does whatever that control does, rather than the
+  // global listener hijacking it — focus reverts to <body> right after the
+  // answer input unmounts, which is what this actually listens for.
   useEffect(() => {
     if (feedback === null) return;
     const handleKeyDown = (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        advanceRef.current();
-      }
+      if (e.key !== 'Enter') return;
+      if (document.activeElement && document.activeElement !== document.body) return;
+      e.preventDefault();
+      advanceRef.current();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
