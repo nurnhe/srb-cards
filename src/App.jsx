@@ -751,6 +751,11 @@ export default function App() {
     if (error || !data) {
       console.error('Failed to save answer stats:', error);
       setStorageError(true);
+      // Nothing was actually saved — undo the optimistic bump so the local
+      // count doesn't permanently overstate what's in the database.
+      setWords((prev) =>
+        prev.map((w) => (w.id === id ? { ...w, [field]: Math.max((w[field] || 0) - 1, 0) } : w))
+      );
       return;
     }
     setStorageError(false);
