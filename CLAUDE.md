@@ -80,8 +80,10 @@ that's the image that ends up running in production.
 
 `src/api.js` (browser) → `/api/*` → `backend/src/routes/*` → Supabase. In dev
 the frontend uses relative URLs and Vite proxies `/api` to port 3000
-(`vite.config.js`); `VITE_API_URL` overrides the base once the backend is hosted
-somewhere.
+(`vite.config.js`). The production build doesn't need `VITE_API_URL` either —
+the release container serves the site and the API from the same origin (see
+"Running the release version in Docker" below) — it exists only for the case
+of running the frontend and backend on genuinely separate hosts.
 
 | Endpoint | Does |
 | --- | --- |
