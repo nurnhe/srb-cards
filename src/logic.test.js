@@ -129,29 +129,56 @@ describe('shuffle', () => {
 });
 
 describe('buildWeightedDeck', () => {
-  it('gives struggling words more entries than clean ones', () => {
+  it('gives struggling words more entries than mastered ones', () => {
     const pool = [
-      { id: 'clean', wrong_count: 0 },
-      { id: 'hard', wrong_count: 3 },
+      { id: 'mastered', correct_count: 10, wrong_count: 0 },
+      { id: 'hard', correct_count: 0, wrong_count: 3 },
     ];
     const deck = buildWeightedDeck(pool);
-    const cleanCount = deck.filter((id) => id === 'clean').length;
+    const masteredCount = deck.filter((id) => id === 'mastered').length;
     const hardCount = deck.filter((id) => id === 'hard').length;
-    expect(cleanCount).toBe(1);
-    expect(hardCount).toBe(4); // 1 + min(3, 5)
+    expect(masteredCount).toBe(1);
+    expect(hardCount).toBe(4); // 1 + min(3 - 0, 5)
+  });
+
+  it('gives never-attempted words a boost over mastered ones, so new vocabulary actually gets practiced', () => {
+    const pool = [
+      { id: 'mastered', correct_count: 10, wrong_count: 0 },
+      { id: 'unseen', correct_count: 0, wrong_count: 0 },
+    ];
+    const deck = buildWeightedDeck(pool);
+    const masteredCount = deck.filter((id) => id === 'mastered').length;
+    const unseenCount = deck.filter((id) => id === 'unseen').length;
+    expect(masteredCount).toBe(1);
+    expect(unseenCount).toBe(3);
+  });
+
+  it('lets a once-hard word decay back toward baseline once it has since been answered correctly enough', () => {
+    // 5 wrong answers used to mean permanent weight 6 forever, even after
+    // being relearned — this is exactly what made a handful of old
+    // mistakes dominate every session while everything else, including
+    // genuinely new words, barely showed up.
+    const stillRaw = buildWeightedDeck([{ id: 'x', correct_count: 0, wrong_count: 5 }]);
+    expect(stillRaw).toHaveLength(6); // 1 + min(5 - 0, 5)
+
+    const relearned = buildWeightedDeck([{ id: 'x', correct_count: 5, wrong_count: 5 }]);
+    expect(relearned).toHaveLength(1); // net struggle is back to 0
+
+    const overlearned = buildWeightedDeck([{ id: 'x', correct_count: 50, wrong_count: 5 }]);
+    expect(overlearned).toHaveLength(1); // correct answers can't push weight below baseline
   });
 
   it('caps the extra weight so one very-hard word cannot swallow the deck', () => {
-    const pool = [{ id: 'very-hard', wrong_count: 999 }];
+    const pool = [{ id: 'very-hard', correct_count: 0, wrong_count: 999 }];
     const deck = buildWeightedDeck(pool);
     expect(deck).toHaveLength(6); // 1 + min(999, 5)
   });
 
   it('includes every word at least once', () => {
     const pool = [
-      { id: 'a', wrong_count: 0 },
-      { id: 'b', wrong_count: 2 },
-      { id: 'c', wrong_count: 5 },
+      { id: 'a', correct_count: 10, wrong_count: 0 },
+      { id: 'b', correct_count: 0, wrong_count: 2 },
+      { id: 'c', correct_count: 0, wrong_count: 5 },
     ];
     const deck = buildWeightedDeck(pool);
     expect(new Set(deck)).toEqual(new Set(['a', 'b', 'c']));
@@ -164,12 +191,12 @@ describe('buildWeightedDeck', () => {
     // boundary (ceil(11/2) = 6), so a perfect arrangement exists and this
     // must hit it every time, not just "usually".
     const pool = [
-      { id: 'a', wrong_count: 5 }, // weight 6
-      { id: 'b', wrong_count: 0 },
-      { id: 'c', wrong_count: 0 },
-      { id: 'd', wrong_count: 0 },
-      { id: 'e', wrong_count: 0 },
-      { id: 'f', wrong_count: 0 },
+      { id: 'a', correct_count: 0, wrong_count: 5 }, // weight 6
+      { id: 'b', correct_count: 10, wrong_count: 0 },
+      { id: 'c', correct_count: 10, wrong_count: 0 },
+      { id: 'd', correct_count: 10, wrong_count: 0 },
+      { id: 'e', correct_count: 10, wrong_count: 0 },
+      { id: 'f', correct_count: 10, wrong_count: 0 },
     ];
     for (let i = 0; i < 200; i++) {
       const deck = buildWeightedDeck(pool);
@@ -186,8 +213,8 @@ describe('buildWeightedDeck', () => {
     // (6 - 2) = 4 adjacent-same pairs are unavoidable, however they're
     // arranged. This checks the result hits that true minimum, not worse.
     const pool = [
-      { id: 'hard', wrong_count: 999 }, // weight capped at 6, but only 1 other word exists
-      { id: 'clean', wrong_count: 0 },
+      { id: 'hard', correct_count: 0, wrong_count: 999 }, // weight capped at 6, but only 1 other word exists
+      { id: 'clean', correct_count: 10, wrong_count: 0 },
     ];
     for (let i = 0; i < 50; i++) {
       const deck = buildWeightedDeck(pool);

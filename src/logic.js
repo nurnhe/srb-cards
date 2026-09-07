@@ -155,13 +155,34 @@ export function shuffle(arr) {
   return a;
 }
 
-// Builds a shuffled deck of word ids where words with more wrong answers
-// appear more often — lightweight stand-in for spaced repetition. A word
-// with N wrong answers is entered (1 + min(N, 5)) times, so a struggling
-// word shows up up to 6x more often than a clean one, without letting a
-// single very-hard word swallow the whole deck.
+// A word's weight: how many times it should appear in one pass over the
+// practice deck. Two special cases, then a general rule:
+// - Never attempted (no correct or wrong answers yet) gets a flat boost —
+//   it needs a few looks to build any familiarity at all, and without this
+//   it's stuck at the same baseline weight as a word that's already been
+//   mastered, so brand-new vocabulary barely gets practiced.
+// - Otherwise, weight tracks *net* struggle: wrong answers minus correct
+//   ones, floored at 0 and capped at 5. Using raw wrong_count alone (the
+//   previous approach) never decays — a word that was hard when first
+//   learned keeps outweighing everything else forever, even after being
+//   answered correctly dozens of times since, which is what made a handful
+//   of old mistakes dominate every session ("the same words over and
+//   over") while both new words and words actually being missed right now
+//   got crowded out. Subtracting correct answers lets a word earn its way
+//   back down to baseline once it's actually been relearned.
+const UNSEEN_WEIGHT = 3;
+const MAX_STRUGGLE_WEIGHT = 5;
+
+function wordWeight(w) {
+  const correct = w.correct_count || 0;
+  const wrong = w.wrong_count || 0;
+  if (correct === 0 && wrong === 0) return UNSEEN_WEIGHT;
+  const netStruggle = Math.max(wrong - correct, 0);
+  return 1 + Math.min(netStruggle, MAX_STRUGGLE_WEIGHT);
+}
+
 export function buildWeightedDeck(pool) {
-  const counts = shuffle(pool).map((w) => [w.id, 1 + Math.min(w.wrong_count || 0, 5)]);
+  const counts = shuffle(pool).map((w) => [w.id, wordWeight(w)]);
   // Round-robin placement by descending weight — same technique as the
   // "reorganize string" problem — guarantees no two adjacent copies of the
   // same id whenever that's mathematically possible (i.e. whenever no
