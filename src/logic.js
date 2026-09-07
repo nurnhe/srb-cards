@@ -22,9 +22,18 @@ export function isRelevantTranslationMatch(match, inputWordCount) {
 // MyMemory occasionally returns text in the wrong language despite the
 // sr|ru langpair being requested (e.g. the English "sin" instead of the
 // Russian "грех" for the query "greh"). Genuine Russian text is always
-// Cyrillic, so this catches that without needing real language detection.
+// Cyrillic, so a plain non-Cyrillic check catches that without needing real
+// language detection — but Serbian is *also* written in Cyrillic, and the
+// two alphabets overlap almost completely, so that alone can't catch
+// MyMemory echoing the Serbian query back as if it were the translation.
+// ђ/ј/љ/њ/ћ/џ exist only in the Serbian Cyrillic alphabet, not the Russian
+// one — their presence is a reliable (if not exhaustive — plenty of real
+// Serbian words use only the shared letters) signal that this is Serbian
+// text, not a genuine Russian translation.
 export function isPlausibleRussianText(text) {
-  return isCyrillic(text || '');
+  const t = text || '';
+  if (!isCyrillic(t)) return false;
+  return !/[ђјљњћџ]/i.test(t);
 }
 
 // ---- Serbian Cyrillic ↔ Latin transliteration ----
@@ -152,20 +161,28 @@ export function shuffle(arr) {
 // word shows up up to 6x more often than a clean one, without letting a
 // single very-hard word swallow the whole deck.
 export function buildWeightedDeck(pool) {
-  const ids = [];
-  pool.forEach((w) => {
-    const weight = 1 + Math.min(w.wrong_count || 0, 5);
-    for (let i = 0; i < weight; i++) ids.push(w.id);
-  });
-  const shuffled = shuffle(ids);
-  // avoid two copies of the same word landing back-to-back
-  for (let i = 1; i < shuffled.length; i++) {
-    if (shuffled[i] === shuffled[i - 1]) {
-      const swapIdx = shuffled.findIndex((id, j) => j > i && id !== shuffled[i]);
-      if (swapIdx !== -1) [shuffled[i], shuffled[swapIdx]] = [shuffled[swapIdx], shuffled[i]];
+  const counts = shuffle(pool).map((w) => [w.id, 1 + Math.min(w.wrong_count || 0, 5)]);
+  // Round-robin placement by descending weight — same technique as the
+  // "reorganize string" problem — guarantees no two adjacent copies of the
+  // same id whenever that's mathematically possible (i.e. whenever no
+  // single id's weight exceeds half the deck, rounded up). A shuffle
+  // followed by ad-hoc adjacent-swapping can't always achieve that: with
+  // one very-hard word at max weight (6) among several clean ones, a
+  // one-pass swap can run out of distinct neighbors to swap with even
+  // though a fully non-adjacent arrangement exists. Pool order is shuffled
+  // first so ties in weight don't always resolve the same way.
+  counts.sort((a, b) => b[1] - a[1]);
+  const total = counts.reduce((sum, [, weight]) => sum + weight, 0);
+  const deck = new Array(total);
+  let index = 0;
+  counts.forEach(([id, weight]) => {
+    for (let i = 0; i < weight; i++) {
+      deck[index] = id;
+      index += 2;
+      if (index >= total) index = 1;
     }
-  }
-  return shuffled;
+  });
+  return deck;
 }
 
 // Re-inserts a just-missed word into the *remaining* current-cycle deck so
@@ -182,7 +199,26 @@ export function requeueMissedWord(deck, wordId, { minGap = 3, maxGap = 7 } = {})
   // pick it up instead (wrong_count is already updated by then).
   if (deck.length === 0) return deck;
   const gap = minGap + Math.floor(Math.random() * (maxGap - minGap + 1));
-  const insertAt = Math.min(gap, deck.length);
+  let insertAt = Math.min(gap, deck.length);
+  // The deck can already contain other copies of this same word (from its
+  // own weighting, or an earlier requeue) — inserting blindly can land it
+  // right next to one of them, undoing buildWeightedDeck's no-adjacent
+  // guarantee. Nudge outward (forward first, then backward) to the nearest
+  // slot that doesn't border an existing copy; if truly none exists (e.g.
+  // the deck is entirely this word), fall back to the original spot.
+  const collides = (idx) => deck[idx - 1] === wordId || deck[idx] === wordId;
+  if (collides(insertAt)) {
+    for (let offset = 1; offset <= deck.length; offset++) {
+      if (insertAt + offset <= deck.length && !collides(insertAt + offset)) {
+        insertAt += offset;
+        break;
+      }
+      if (insertAt - offset >= 0 && !collides(insertAt - offset)) {
+        insertAt -= offset;
+        break;
+      }
+    }
+  }
   const next = [...deck];
   next.splice(insertAt, 0, wordId);
   return next;

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { supabase } from '../supabase.js';
-import { route, fail } from '../http.js';
+import { route, fail, isValidId } from '../http.js';
 
 const router = Router();
 
@@ -31,14 +31,21 @@ router.delete(
   '/',
   route(async (req, res) => {
     const { a: idA, b: idB } = req.query;
-    if (!idA || !idB) return res.status(400).json({ error: 'a and b query params are required' });
+    // Express parses a repeated query key (?a=1&a=2) into an array — isValidId
+    // rejects that (and any other non-uuid value) the same as a missing one,
+    // rather than silently passing an array into the query below.
+    if (!isValidId(idA) || !isValidId(idB)) {
+      return res.status(400).json({ error: 'a and b query params are required' });
+    }
 
-    const [first, second] = await Promise.all([
-      supabase.from('word_links').delete().eq('word_id', idA).eq('related_word_id', idB),
-      supabase.from('word_links').delete().eq('word_id', idB).eq('related_word_id', idA),
-    ]);
-    const failed = [first, second].find((r) => r.error);
-    if (failed) return fail(res, 'DELETE /api/links', failed.error);
+    // Both directions in one statement, matching how POST / writes them —
+    // two independent delete calls (the previous approach) could partially
+    // fail, leaving a one-way "link" that nothing would ever self-heal.
+    const { error } = await supabase
+      .from('word_links')
+      .delete()
+      .or(`and(word_id.eq.${idA},related_word_id.eq.${idB}),and(word_id.eq.${idB},related_word_id.eq.${idA})`);
+    if (error) return fail(res, 'DELETE /api/links', error);
     res.status(204).end();
   })
 );

@@ -157,12 +157,12 @@ describe('buildWeightedDeck', () => {
     expect(new Set(deck)).toEqual(new Set(['a', 'b', 'c']));
   });
 
-  it('reduces (though does not perfectly guarantee) back-to-back repeats of the same word', () => {
-    // The anti-adjacency step is a single best-effort left-to-right swap
-    // pass, not a full guaranteed rearrangement — for a heavily skewed
-    // pool it measurably helps (~2.6 -> ~1.4 avg adjacent repeats per
-    // deck in manual sampling) but doesn't reach zero. This test checks
-    // it stays below the unmitigated baseline, not that repeats vanish.
+  it('fully eliminates back-to-back repeats whenever mathematically possible', () => {
+    // Round-robin placement by descending weight guarantees zero adjacent
+    // duplicates whenever no single id's weight exceeds half the deck
+    // (rounded up) — here weight 6 out of 11 total sits exactly at that
+    // boundary (ceil(11/2) = 6), so a perfect arrangement exists and this
+    // must hit it every time, not just "usually".
     const pool = [
       { id: 'a', wrong_count: 5 }, // weight 6
       { id: 'b', wrong_count: 0 },
@@ -171,15 +171,32 @@ describe('buildWeightedDeck', () => {
       { id: 'e', wrong_count: 0 },
       { id: 'f', wrong_count: 0 },
     ];
-    let adjacentRepeats = 0;
-    const runs = 200;
-    for (let i = 0; i < runs; i++) {
+    for (let i = 0; i < 200; i++) {
       const deck = buildWeightedDeck(pool);
       for (let j = 1; j < deck.length; j++) {
-        if (deck[j] === deck[j - 1]) adjacentRepeats++;
+        expect(deck[j]).not.toBe(deck[j - 1]);
       }
     }
-    expect(adjacentRepeats / runs).toBeLessThan(2);
+  });
+
+  it('minimizes (but cannot fully avoid) adjacent repeats when one word mathematically must dominate', () => {
+    // weight 6 (999 wrong answers, capped) against a single weight-1 word
+    // makes a 7-element deck where one separator can split the 6 copies
+    // into at most 2 runs — by the pigeonhole principle at least
+    // (6 - 2) = 4 adjacent-same pairs are unavoidable, however they're
+    // arranged. This checks the result hits that true minimum, not worse.
+    const pool = [
+      { id: 'hard', wrong_count: 999 }, // weight capped at 6, but only 1 other word exists
+      { id: 'clean', wrong_count: 0 },
+    ];
+    for (let i = 0; i < 50; i++) {
+      const deck = buildWeightedDeck(pool);
+      let violations = 0;
+      for (let j = 1; j < deck.length; j++) {
+        if (deck[j] === deck[j - 1]) violations++;
+      }
+      expect(violations).toBeLessThanOrEqual(4);
+    }
   });
 });
 
@@ -552,6 +569,15 @@ describe('isPlausibleRussianText', () => {
   it('rejects empty/missing text', () => {
     expect(isPlausibleRussianText('')).toBe(false);
     expect(isPlausibleRussianText(undefined)).toBe(false);
+  });
+
+  it('rejects Serbian Cyrillic text echoed back instead of a real translation', () => {
+    // ђ/ј/љ/њ/ћ/џ don't exist in the Russian alphabet at all — their
+    // presence means this is Serbian, not a genuine Russian translation,
+    // even though both scripts are Cyrillic and would otherwise pass.
+    expect(isPlausibleRussianText('љубав')).toBe(false); // "love" (sr)
+    expect(isPlausibleRussianText('ћутати')).toBe(false); // "to be silent" (sr)
+    expect(isPlausibleRussianText('џак')).toBe(false); // "sack" (sr)
   });
 });
 
