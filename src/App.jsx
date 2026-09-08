@@ -2842,6 +2842,46 @@ function AddWord({ onAdd, goToList, words, tags }) {
             </div>
           );
         })()}
+        {(() => {
+          // A newly-created tag (typed via Enter or "направи „X"", not
+          // matching any existing tag) has no highlighted pill to show it's
+          // selected — the pill list above only renders from the existing
+          // `tags` prop, so a brand-new name silently vanishes from the UI
+          // the instant it's added, with nothing telling you it worked. The
+          // per-target breakdown below only appears once there are related
+          // words to break it down by, so it can't cover this case either.
+          const newlyCreated = selectedTagNames.filter(
+            (name) => !(tags || []).some((t) => t.name.toLowerCase() === name)
+          );
+          if (newlyCreated.length === 0) return null;
+          return (
+            <div className="flex flex-wrap gap-1.5 mb-1.5">
+              {newlyCreated.map((name) => (
+                <span
+                  key={name}
+                  className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
+                  style={{
+                    fontFamily: FONT_MONO,
+                    fontSize: '0.78rem',
+                    background: '#12192E',
+                    border: '1px solid #3D8B5F',
+                    color: '#7DC79A',
+                  }}
+                >
+                  {name}
+                  <button
+                    type="button"
+                    onClick={() => removeTagName(name)}
+                    aria-label={`Уклони ${name}`}
+                    style={{ color: '#7DC79A', lineHeight: 1, fontWeight: 700 }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          );
+        })()}
         {suggestedTagNames.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
             <span style={{ color: '#5C6690', fontSize: '0.7rem' }}>предлог из повезаних речи:</span>
