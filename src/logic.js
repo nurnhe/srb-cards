@@ -203,6 +203,27 @@ export function buildWeightedDeck(pool) {
       if (index >= total) index = 1;
     }
   });
+  // The placement above always seats the single highest-weight word at
+  // index 0 — that's just what the first assignment the loop ever makes
+  // happens to be, not something tied to the shuffle. Left as-is, whichever
+  // word has the most net wrong answers would start *every single cycle*
+  // deterministically, forever — not just appear more often within a
+  // cycle, but literally always be the very next card right after you
+  // finish one. That's arguably the biggest source of "same word over and
+  // over": a 100%-certain event, not a weighted-but-still-random one.
+  // Rotating the finished deck by a random offset spreads the starting
+  // point across the whole thing instead. It's only safe when the deck
+  // doesn't *end* on the same id it starts with — rotation turns that
+  // particular pair into a new adjacent pair, and a word whose weight sits
+  // exactly at the no-adjacent-repeat ceiling (ceil(total/2)) necessarily
+  // both opens and closes the arrangement (e.g. "ababa"), so any rotation
+  // there would recreate the exact violation the round-robin placement
+  // exists to prevent. Every other pair the rotation touches is already
+  // proven non-adjacent, unchanged from the original arrangement.
+  if (total > 1 && deck[0] !== deck[total - 1]) {
+    const offset = 1 + Math.floor(Math.random() * (total - 1));
+    return deck.slice(offset).concat(deck.slice(0, offset));
+  }
   return deck;
 }
 

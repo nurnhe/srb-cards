@@ -168,6 +168,46 @@ describe('buildWeightedDeck', () => {
     expect(overlearned).toHaveLength(1); // correct answers can't push weight below baseline
   });
 
+  it('does not always seat the single hardest word at the very start of the deck', () => {
+    // Below the majority threshold (weight 4 of 8 total, not the ceil(8/2)=4
+    // boundary-forcing case... use 3 of 9 so it's clearly non-forced), the
+    // round-robin placement's first assignment always lands at index 0 —
+    // without a fix, that means whichever word is hardest starts *every*
+    // cycle deterministically. That's not "the hardest word shows up more
+    // often" (the intended behavior); it's "the hardest word is always the
+    // very next card after you finish a round," which is a much stronger
+    // and much more noticeable form of repetition than the weighting was
+    // ever meant to produce.
+    const pool = [
+      { id: 'hardest', correct_count: 0, wrong_count: 3 }, // weight 4
+      { id: 'b', correct_count: 10, wrong_count: 0 },
+      { id: 'c', correct_count: 10, wrong_count: 0 },
+      { id: 'd', correct_count: 10, wrong_count: 0 },
+      { id: 'e', correct_count: 10, wrong_count: 0 },
+    ];
+    const firstSlots = new Set();
+    for (let i = 0; i < 100; i++) {
+      firstSlots.add(buildWeightedDeck(pool)[0]);
+    }
+    expect(firstSlots.size).toBeGreaterThan(1);
+  });
+
+  it('still fully eliminates back-to-back repeats after randomizing the start', () => {
+    const pool = [
+      { id: 'hardest', correct_count: 0, wrong_count: 3 }, // weight 4
+      { id: 'b', correct_count: 10, wrong_count: 0 },
+      { id: 'c', correct_count: 10, wrong_count: 0 },
+      { id: 'd', correct_count: 10, wrong_count: 0 },
+      { id: 'e', correct_count: 10, wrong_count: 0 },
+    ];
+    for (let i = 0; i < 200; i++) {
+      const deck = buildWeightedDeck(pool);
+      for (let j = 1; j < deck.length; j++) {
+        expect(deck[j]).not.toBe(deck[j - 1]);
+      }
+    }
+  });
+
   it('caps the extra weight so one very-hard word cannot swallow the deck', () => {
     const pool = [{ id: 'very-hard', correct_count: 0, wrong_count: 999 }];
     const deck = buildWeightedDeck(pool);
