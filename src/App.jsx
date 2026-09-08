@@ -68,9 +68,40 @@ async function fetchExampleFromGlosbe(srWord) {
   return withText ? withText.phrase.trim() : null;
 }
 
-// Tries Tatoeba first, then Glosbe as a fallback. Returns null if neither
-// source has anything — that's expected fairly often for Serbian.
+// Best-effort usage-example lookup from English Wiktionary — same
+// REST endpoint/Serbo-Croatian-section pattern as the related-words/IPA/
+// inflection lookups above. Wiktionary's usage examples are hand-picked by
+// editors specifically to illustrate the headword (unlike Tatoeba's general
+// corpus search, which can surface a sentence where the word is barely
+// relevant), so this is tried first. Each example also carries an English
+// translation (in a sibling ".e-translation" span) that isn't used here —
+// the app's `example` field is Serbian-only — but it's there in the DOM if
+// that's ever worth surfacing later. Only the first example is used, same
+// "good enough for a hint, not exhaustive" tradeoff as the IPA lookup.
+async function fetchExampleFromWiktionary(srWord) {
+  const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
+  const res = await fetch(url);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Wiktionary request failed (${res.status})`);
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const heading = doc.getElementById('Serbo-Croatian');
+  const section = heading?.closest('section');
+  if (!section) return null;
+  const example = section.querySelector('.h-usage-example .e-example');
+  const text = example?.textContent?.replace(/\s+/g, ' ').trim();
+  return text || null;
+}
+
+// Tries Wiktionary first, then Tatoeba, then Glosbe. Returns null if none
+// of the three has anything — that's expected fairly often for Serbian.
 async function fetchExample(srWord) {
+  try {
+    const fromWiktionary = await fetchExampleFromWiktionary(srWord);
+    if (fromWiktionary) return fromWiktionary;
+  } catch (e) {
+    // fall through to the next source
+  }
   try {
     const fromTatoeba = await fetchExampleFromTatoeba(srWord);
     if (fromTatoeba) return fromTatoeba;
@@ -81,7 +112,7 @@ async function fetchExample(srWord) {
     const fromGlosbe = await fetchExampleFromGlosbe(srWord);
     if (fromGlosbe) return fromGlosbe;
   } catch (e) {
-    // both sources failed or found nothing
+    // all three sources failed or found nothing
   }
   return null;
 }
@@ -2849,7 +2880,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
             color: sr.trim() ? '#D4A54A' : '#4B5680',
             background: 'transparent',
           }}
-          title="Потражи пример из Tatoeba корпуса (може не наћи ништа)"
+          title="Потражи пример употребе (Wiktionary, Tatoeba, Glosbe — може не наћи ништа)"
         >
           {lookupState === 'loading' ? (
             <Loader2 size={13} className="animate-spin" />

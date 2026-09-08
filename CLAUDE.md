@@ -195,7 +195,7 @@ the exact SQL, prefer `if not exists` so it's safe to re-run.
 ## External APIs in use (all best-effort, still called from the browser)
 
 These deliberately did **not** move behind the backend: they have nothing to do
-with the database, and the two Wiktionary helpers parse HTML with `DOMParser`,
+with the database, and the Wiktionary helpers parse HTML with `DOMParser`,
 which needs a browser. Worth revisiting later — Tatoeba and Glosbe are
 unofficial endpoints that may be CORS-blocked in the browser today, and a server
 would not be.
@@ -203,9 +203,20 @@ would not be.
 - **MyMemory** (`api.mymemory.translated.net`) — free, CORS-enabled,
   translation suggestions for the "Предложи" button. Machine-translated,
   quality varies; presented as suggestions to review, not auto-accepted.
-- **Tatoeba** + **Glosbe** (fallback) — best-effort Serbian example
-  sentence lookup. Coverage for Serbian is thin; frequently finds nothing,
-  and that's expected, not a bug. Manual entry is the reliable fallback.
+- **Wiktionary** (`en.wiktionary.org`) — best-effort Serbian example
+  sentence lookup (`fetchExampleFromWiktionary`, tried first), plus
+  related/derived words, IPA pronunciation, and declension/conjugation
+  tables — all from the same REST endpoint's "Serbo-Croatian" section.
+  Usage examples are editor-picked to illustrate the exact headword, so
+  they tend to be more relevant than Tatoeba's corpus search, but Wiktionary
+  doesn't have an entry — let alone a usage example — for every word.
+  Each usage example also carries an English translation in the page
+  (`.e-translation`, sibling of `.e-example`) that isn't used anywhere
+  yet — the `example` field is Serbian-only.
+- **Tatoeba** + **Glosbe** (fallback, after Wiktionary) — best-effort
+  Serbian example sentence lookup. Coverage for Serbian is thin; frequently
+  finds nothing, and that's expected, not a bug. Manual entry is the
+  reliable fallback.
 
 ## Where the backlog lives
 
