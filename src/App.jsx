@@ -1582,6 +1582,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
   const [inflectionId, setInflectionId] = useState(null); // word currently showing its declension/conjugation table
   const [inflectionTables, setInflectionTables] = useState(null);
   const [inflectionState, setInflectionState] = useState('idle'); // idle | loading | notfound | error
+  const [deletingId, setDeletingId] = useState(null); // word currently showing its delete confirmation
   const [activeTagFilter, setActiveTagFilter] = useState(new Set()); // Set of tag ids; empty = all
   const [sortMode, setSortMode] = useState('alpha'); // alpha | hardest
   const [searchQuery, setSearchQuery] = useState('');
@@ -1673,6 +1674,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     setLinkingId(null);
     setTaggingId(null);
     setInflectionId(null);
+    setDeletingId(null);
   };
 
   const saveEdit = async () => {
@@ -1701,6 +1703,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     setEditingId(null);
     setTaggingId(null);
     setInflectionId(null);
+    setDeletingId(null);
   };
 
   const startTagging = (id) => {
@@ -1713,6 +1716,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     setEditingId(null);
     setLinkingId(null);
     setInflectionId(null);
+    setDeletingId(null);
   };
 
   // Toggles the declension/conjugation table for a word — reuses
@@ -1727,6 +1731,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
     setEditingId(null);
     setLinkingId(null);
     setTaggingId(null);
+    setDeletingId(null);
     setInflectionTables(null);
     setInflectionState('loading');
     try {
@@ -1742,6 +1747,22 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
       setInflectionTables(null);
       setInflectionState('error');
     }
+  };
+
+  // Deleting is destructive and irreversible, unlike the other row actions —
+  // clicking the trash icon opens an inline "are you sure?" instead of
+  // deleting immediately, same toggle-to-close behavior as the other panels
+  // if clicked again on the same word.
+  const startDelete = (id) => {
+    if (deletingId === id) {
+      setDeletingId(null);
+      return;
+    }
+    setDeletingId(id);
+    setEditingId(null);
+    setLinkingId(null);
+    setTaggingId(null);
+    setInflectionId(null);
   };
 
   return (
@@ -2032,9 +2053,9 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
                       <Pencil size={15} />
                     </button>
                     <button
-                      onClick={() => onDelete(w.id)}
+                      onClick={() => startDelete(w.id)}
                       className="p-2 rounded-md"
-                      style={{ color: '#C41E3A' }}
+                      style={{ color: deletingId === w.id ? '#F5F1E8' : '#C41E3A', background: deletingId === w.id ? '#C41E3A' : 'transparent' }}
                       aria-label="Обриши"
                     >
                       <Trash2 size={15} />
@@ -2089,6 +2110,40 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
                   <p style={{ color: '#8892AE', fontSize: '0.78rem' }}>Претрага тренутно није доступна.</p>
                 )}
                 {inflectionState === 'idle' && inflectionTables && <InflectionTables tables={inflectionTables} />}
+              </div>
+            )}
+
+            {deletingId === w.id && (
+              // Stacked vertically rather than side-by-side with the buttons —
+              // a horizontal layout squeezed the message into an awkwardly
+              // narrow column on phone-width screens, wrapping one or two
+              // words per line.
+              <div className="flex flex-col gap-3 rounded-lg p-3" style={{ background: '#2A1218', border: '1px solid #C41E3A' }}>
+                <p style={{ color: '#F5F1E8', fontSize: '0.85rem' }}>
+                  Обрисати <strong>{w.sr}</strong>? Ово укључује њене тагове, везе и статистику, и не може се
+                  опозвати.
+                </p>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDeletingId(null)}
+                    className="rounded-lg px-3 py-1.5"
+                    style={{ fontFamily: FONT_BODY, fontSize: '0.85rem', color: '#8892AE', background: '#12192E', border: '1px solid #2A3355' }}
+                  >
+                    Откажи
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDelete(w.id);
+                      setDeletingId(null);
+                    }}
+                    className="rounded-lg px-3 py-1.5"
+                    style={{ fontFamily: FONT_BODY, fontSize: '0.85rem', color: '#F5F1E8', background: '#C41E3A' }}
+                  >
+                    Да, обриши
+                  </button>
+                </div>
               </div>
             )}
           </div>
