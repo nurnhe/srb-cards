@@ -2262,6 +2262,11 @@ function RelatedWordPicker({ word, allWords, query, onQueryChange, onPick, onCan
 function AddWord({ onAdd, goToList, words, tags }) {
   const [sr, setSr] = useState('');
   const [ruVariants, setRuVariants] = useState([]);
+  // Bumped on every successful submit so VariantsEditor below remounts with
+  // fresh internal state — its own uncommitted draft text and suggestions
+  // aren't part of `ruVariants`, so clearing that prop alone leaves them
+  // sitting there looking like part of the next word.
+  const [variantsResetKey, setVariantsResetKey] = useState(0);
   const [example, setExample] = useState('');
   const [justAdded, setJustAdded] = useState(false);
   const [lookupState, setLookupState] = useState('idle'); // idle | loading | notfound | error
@@ -2410,6 +2415,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
     srLiveRef.current = '';
     setSr('');
     setRuVariants([]);
+    setVariantsResetKey((k) => k + 1);
     setExample('');
     setLookupState('idle');
     setRelatedWords([]);
@@ -2720,7 +2726,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
         ПРЕВОДИ (МОЖЕ ВИШЕ)
       </label>
       <div className="mt-1.5 mb-1">
-        <VariantsEditor variants={ruVariants} onChange={setRuVariants} srWord={sr} />
+        <VariantsEditor key={variantsResetKey} variants={ruVariants} onChange={setRuVariants} srWord={sr} />
       </div>
       <p style={{ color: '#5C6690', fontSize: '0.75rem', marginBottom: 20 }}>
         На картици ће се рачунати тачним било који од ових превода.
