@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload, Table2, LogOut } from 'lucide-react';
+import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload, Table2, LogOut, Timer } from 'lucide-react';
 import * as api from './api';
 import {
   otherScript,
@@ -1157,6 +1157,9 @@ function TabBar({ tab, setTab, count }) {
 
 /* ---------------- PRACTICE ---------------- */
 
+const PRACTICE_TIMER_SECONDS = 30;
+const TIMER_ENABLED_STORAGE_KEY = 'practiceTimerEnabled';
+
 function Practice({ words, tags, onAnswer }) {
   const [direction, setDirection] = useState('sr-ru'); // sr-ru: show SR, ask RU
   const [tagFilter, setTagFilter] = useState(new Set()); // Set of tag ids; empty = all
@@ -1164,7 +1167,19 @@ function Practice({ words, tags, onAnswer }) {
   const [input, setInput] = useState('');
   const [feedback, setFeedback] = useState(null); // null | 'correct' | 'wrong'
   const [typoForgiven, setTypoForgiven] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
   const [session, setSession] = useState({ correct: 0, total: 0 });
+  // On by default but toggleable, and remembered across visits — a
+  // preference this deliberate rather than something to re-decide every
+  // session.
+  const [timerEnabled, setTimerEnabled] = useState(() => {
+    try {
+      return localStorage.getItem(TIMER_ENABLED_STORAGE_KEY) !== 'false';
+    } catch (e) {
+      return true;
+    }
+  });
+  const [timeLeft, setTimeLeft] = useState(PRACTICE_TIMER_SECONDS);
   const inputRef = useRef(null);
   // "deck" of word ids not yet shown in the current cycle, weighted toward
   // words with more wrong answers — see buildWeightedDeck.
@@ -1173,6 +1188,47 @@ function Practice({ words, tags, onAnswer }) {
   // the pool/current early-returns) so the keydown listener below never
   // closes over a stale `current`/`drawNext`.
   const advanceRef = useRef(() => {});
+  // Same reason as advanceRef — the timer's own interval below can't close
+  // over a stale `current`/`feedback` from whichever render started it.
+  const timeoutRef = useRef(() => {});
+
+  const toggleTimer = () => {
+    setTimerEnabled((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(TIMER_ENABLED_STORAGE_KEY, String(next));
+      } catch (e) {
+        // localStorage unavailable (private mode, etc.) — the toggle still
+        // works for this session, it just won't be remembered next time.
+      }
+      return next;
+    });
+  };
+
+  // Counts down regardless of typing activity, per the task's own answered
+  // "open questions" — runs only while an answer is pending (not once
+  // feedback is showing) and only when the timer is switched on. Restarts
+  // for every new card since this effect re-runs whenever `current` or
+  // `feedback` changes.
+  useEffect(() => {
+    if (!timerEnabled || feedback !== null || !current) return;
+    setTimeLeft(PRACTICE_TIMER_SECONDS);
+    // Tracks the count in a plain closure variable rather than reading it
+    // back from state — calling handleTimeout (itself several setState
+    // calls) from inside a setTimeLeft *updater* function isn't a reliably
+    // supported pattern, and silently dropped the timeout entirely in
+    // testing: the displayed countdown reached 0, but nothing else happened.
+    let remaining = PRACTICE_TIMER_SECONDS;
+    const interval = setInterval(() => {
+      remaining -= 1;
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        clearInterval(interval);
+        timeoutRef.current();
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [current, feedback, timerEnabled]);
 
   // A word must have ALL selected tags (intersection), not just any one
   // of them — selecting more tags narrows the pool.
@@ -1287,6 +1343,7 @@ function Practice({ words, tags, onAnswer }) {
     const isCorrect = isAnswerCorrect(direction, current, input);
     setFeedback(isCorrect ? 'correct' : 'wrong');
     setTypoForgiven(isCorrect && isTypoCorrected(direction, current, input));
+    setTimedOut(false);
     setSession((s) => ({ correct: s.correct + (isCorrect ? 1 : 0), total: s.total + 1 }));
     onAnswer(current.id, isCorrect);
     if (!isCorrect) {
@@ -1296,11 +1353,28 @@ function Practice({ words, tags, onAnswer }) {
     }
   };
 
+  // Same as a submitted wrong answer — counts against wrong_count and gets
+  // requeued the same way — since letting a stalled card sit forever would
+  // just quietly break the deck's own no-repeat guarantees, not because
+  // running out the clock deserves the exact same treatment as guessing
+  // wrong. `timedOut` only changes what the feedback screen *says*.
+  const handleTimeout = () => {
+    if (!current || feedback) return;
+    setFeedback('wrong');
+    setTypoForgiven(false);
+    setTimedOut(true);
+    setSession((s) => ({ ...s, total: s.total + 1 }));
+    onAnswer(current.id, false);
+    deckRef.current = requeueMissedWord(deckRef.current, current.id);
+  };
+  timeoutRef.current = handleTimeout;
+
   const next = () => {
     setCurrent(drawNext(current?.id));
     setInput('');
     setFeedback(null);
     setTypoForgiven(false);
+    setTimedOut(false);
   };
   advanceRef.current = next;
 
@@ -1309,6 +1383,7 @@ function Practice({ words, tags, onAnswer }) {
     setInput('');
     setFeedback(null);
     setTypoForgiven(false);
+    setTimedOut(false);
     setCurrent(drawNext(current?.id));
   };
 
@@ -1332,11 +1407,26 @@ function Practice({ words, tags, onAnswer }) {
       </div>
 
       {/* score */}
-      <div
-        className="text-center mb-5"
-        style={{ fontFamily: FONT_MONO, color: '#5C6690', fontSize: '0.8rem', letterSpacing: 1 }}
-      >
-        {session.correct} / {session.total} ТАЧНО У ОВОЈ СЕСИЈИ
+      <div className="flex items-center justify-center gap-2 mb-5">
+        <span style={{ fontFamily: FONT_MONO, color: '#5C6690', fontSize: '0.8rem', letterSpacing: 1 }}>
+          {session.correct} / {session.total} ТАЧНО У ОВОЈ СЕСИЈИ
+        </span>
+        <button
+          type="button"
+          onClick={toggleTimer}
+          className="flex items-center gap-1 rounded-full px-2 py-0.5"
+          style={{
+            fontFamily: FONT_MONO,
+            fontSize: '0.68rem',
+            color: timerEnabled ? '#D4A54A' : '#4B5680',
+            background: timerEnabled ? '#1B2440' : 'transparent',
+            border: '1px solid #2A3355',
+          }}
+          title={timerEnabled ? 'Искључи тајмер (30с по картици)' : 'Укључи тајмер (30с по картици)'}
+        >
+          <Timer size={12} />
+          {timerEnabled ? 'ВКЉ' : 'ИСКЉ'}
+        </button>
       </div>
 
       {/* card */}
@@ -1347,6 +1437,21 @@ function Practice({ words, tags, onAnswer }) {
           border: feedback === 'correct' ? '2px solid #3D8B5F' : feedback === 'wrong' ? '2px solid #C41E3A' : '2px solid #2A3355',
         }}
       >
+        {timerEnabled && feedback === null && (
+          <div
+            className="absolute flex items-center gap-1"
+            style={{
+              top: 14,
+              right: 16,
+              fontFamily: FONT_MONO,
+              fontSize: '0.78rem',
+              color: timeLeft <= 10 ? '#C41E3A' : '#8A8368',
+            }}
+          >
+            <Timer size={13} />
+            {timeLeft}с
+          </div>
+        )}
         <span
           className="inline-block px-2.5 py-1 rounded-full mb-5"
           style={{
@@ -1448,6 +1553,9 @@ function Practice({ words, tags, onAnswer }) {
               <div style={{ color: '#6B6455', fontSize: '0.8rem' }}>
                 (мали типфелер, прихваћено)
               </div>
+            )}
+            {timedOut && (
+              <div style={{ color: '#6B6455', fontSize: '0.8rem' }}>Истекло је време.</div>
             )}
             {feedback === 'wrong' && (
               <div className="flex items-center justify-center gap-1.5" style={{ color: '#6B6455', fontSize: '0.9rem' }}>
