@@ -232,15 +232,26 @@ export function buildWeightedDeck(pool) {
 // annoying and doesn't test retention), and not only at the next full
 // cycle rebuild (too late to feel like a consequence of the mistake).
 // Modeled on how Duolingo requeues a missed item a handful of questions
-// later within the same lesson. The gap is randomized within a range and
-// clamped to the deck's actual remaining length, so a miss near the end
-// of a cycle just requeues near the end rather than overflowing.
-export function requeueMissedWord(deck, wordId, { minGap = 3, maxGap = 7 } = {}) {
+// later within the same lesson — but a fixed "a handful of questions"
+// gap only makes sense for a short lesson. This app's cycle is the whole
+// vocabulary (100+ words), and a wrong answer leaves the deck's overall
+// length unchanged (one word drawn out, one requeued back in) — so a
+// small fixed gap means every wrong answer reinserts within just a few
+// slots of the front, and a run of wrong answers (very plausible right
+// when several unfamiliar words show up together) keeps recycling that
+// same narrow front window forever, never reaching the other 90%+ of the
+// deck. The default gap now scales with the deck's own size instead, so
+// requeues spread across a wide swath of it rather than piling up right
+// at the front; an explicit minGap/maxGap (as the tests use) still works
+// exactly as before.
+export function requeueMissedWord(deck, wordId, { minGap, maxGap } = {}) {
   // Nothing left in this cycle to insert "later" into — forcing it in here
   // would mean an immediate repeat. Let the next cycle's weighted rebuild
   // pick it up instead (wrong_count is already updated by then).
   if (deck.length === 0) return deck;
-  const gap = minGap + Math.floor(Math.random() * (maxGap - minGap + 1));
+  const effectiveMinGap = minGap ?? Math.max(3, Math.floor(deck.length * 0.1));
+  const effectiveMaxGap = maxGap ?? Math.max(effectiveMinGap + 4, Math.floor(deck.length * 0.5));
+  const gap = effectiveMinGap + Math.floor(Math.random() * (effectiveMaxGap - effectiveMinGap + 1));
   let insertAt = Math.min(gap, deck.length);
   // The deck can already contain other copies of this same word (from its
   // own weighting, or an earlier requeue) — inserting blindly can land it
