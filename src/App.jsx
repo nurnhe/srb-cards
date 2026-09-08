@@ -74,9 +74,9 @@ async function fetchExampleFromGlosbe(srWord) {
 // editors specifically to illustrate the headword (unlike Tatoeba's general
 // corpus search, which can surface a sentence where the word is barely
 // relevant), so this is tried first. Each example also carries an English
-// translation (in a sibling ".e-translation" span) that isn't used here —
-// the app's `example` field is Serbian-only — but it's there in the DOM if
-// that's ever worth surfacing later. Only the first example is used, same
+// translation (in a sibling ".e-translation" span) — deliberately not
+// extracted: this app is Serbian↔Russian, not Serbian↔English, and the
+// `example` field is Serbian-only. Only the first example is used, same
 // "good enough for a hint, not exhaustive" tradeoff as the IPA lookup.
 async function fetchExampleFromWiktionary(srWord) {
   const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
