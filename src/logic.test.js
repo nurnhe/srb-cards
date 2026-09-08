@@ -307,6 +307,44 @@ describe('requeueMissedWord', () => {
     deck = requeueMissedWord(deck, 'x', { minGap: 1, maxGap: 1 });
     expect(deck.filter((id) => id === 'x')).toHaveLength(2);
   });
+
+  it('scales the default gap with deck size, instead of a fixed few slots regardless of deck size', () => {
+    const bigDeck = Array.from({ length: 140 }, (_, i) => `w${i}`);
+    // Run several times since it's randomized — every insertion should land
+    // well past the old fixed 3-7 window, proportional to this deck's size.
+    for (let i = 0; i < 30; i++) {
+      const result = requeueMissedWord(bigDeck, 'missed');
+      const at = result.indexOf('missed');
+      expect(at).toBeGreaterThanOrEqual(14); // 10% of 140
+      expect(at).toBeLessThanOrEqual(70); // 50% of 140
+    }
+  });
+
+  it('does not let a long wrong-answer streak on a large deck starve most of the deck (the actual reported bug)', () => {
+    // Simulates Practice's real draw/miss loop: build once, then repeatedly
+    // shift the front card off and — since every answer here is wrong,
+    // worst case — requeue it, exactly like a run of unfamiliar words does
+    // in real use. Length is unaffected by a miss (one drawn out, one
+    // requeued back in), so with the old fixed 3-7 gap this degenerates
+    // into cycling the same handful of words forever, never reaching the
+    // rest of a 140-word deck — confirmed live: only 5-6 distinct words
+    // showed up over 45 real draws before this fix. Run several trials
+    // since it's randomized; even the worst trial should reach well past
+    // that old single-digit pileup.
+    const pool = Array.from({ length: 140 }, (_, i) => ({ id: `w${i}`, correct_count: 0, wrong_count: 0 }));
+    let worstCase = Infinity;
+    for (let trial = 0; trial < 10; trial++) {
+      let deck = buildWeightedDeck(pool);
+      const seen = new Set();
+      for (let i = 0; i < 60; i++) {
+        const drawn = deck.shift();
+        seen.add(drawn);
+        deck = requeueMissedWord(deck, drawn);
+      }
+      worstCase = Math.min(worstCase, seen.size);
+    }
+    expect(worstCase).toBeGreaterThan(15);
+  });
 });
 
 describe('findDuplicateWord', () => {
