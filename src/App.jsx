@@ -1168,6 +1168,7 @@ function Practice({ words, tags, onAnswer }) {
   const [feedback, setFeedback] = useState(null); // null | 'correct' | 'wrong'
   const [typoForgiven, setTypoForgiven] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
+  const [gaveUp, setGaveUp] = useState(false);
   const [session, setSession] = useState({ correct: 0, total: 0 });
   // On by default but toggleable, and remembered across visits — a
   // preference this deliberate rather than something to re-decide every
@@ -1344,6 +1345,7 @@ function Practice({ words, tags, onAnswer }) {
     setFeedback(isCorrect ? 'correct' : 'wrong');
     setTypoForgiven(isCorrect && isTypoCorrected(direction, current, input));
     setTimedOut(false);
+    setGaveUp(false);
     setSession((s) => ({ correct: s.correct + (isCorrect ? 1 : 0), total: s.total + 1 }));
     onAnswer(current.id, isCorrect);
     if (!isCorrect) {
@@ -1363,11 +1365,28 @@ function Practice({ words, tags, onAnswer }) {
     setFeedback('wrong');
     setTypoForgiven(false);
     setTimedOut(true);
+    setGaveUp(false);
     setSession((s) => ({ ...s, total: s.total + 1 }));
     onAnswer(current.id, false);
     deckRef.current = requeueMissedWord(deckRef.current, current.id);
   };
   timeoutRef.current = handleTimeout;
+
+  // For "I know I don't know this" rather than guessing something just to
+  // see the answer — typing a guess you know is wrong to reveal the answer
+  // still worked before, but it's an odd thing to have to do, and either
+  // way it's not a successful recall, so this is scored identically to a
+  // submitted wrong answer (and to a timeout, above) for the same reason.
+  const giveUp = () => {
+    if (!current || feedback) return;
+    setFeedback('wrong');
+    setTypoForgiven(false);
+    setTimedOut(false);
+    setGaveUp(true);
+    setSession((s) => ({ ...s, total: s.total + 1 }));
+    onAnswer(current.id, false);
+    deckRef.current = requeueMissedWord(deckRef.current, current.id);
+  };
 
   const next = () => {
     setCurrent(drawNext(current?.id));
@@ -1375,6 +1394,7 @@ function Practice({ words, tags, onAnswer }) {
     setFeedback(null);
     setTypoForgiven(false);
     setTimedOut(false);
+    setGaveUp(false);
   };
   advanceRef.current = next;
 
@@ -1384,6 +1404,7 @@ function Practice({ words, tags, onAnswer }) {
     setFeedback(null);
     setTypoForgiven(false);
     setTimedOut(false);
+    setGaveUp(false);
     setCurrent(drawNext(current?.id));
   };
 
@@ -1522,18 +1543,29 @@ function Practice({ words, tags, onAnswer }) {
                 ћирилица или латиница — обе варијанте важе
               </div>
             )}
-            <button
-              onClick={checkAnswer}
-              disabled={!input.trim()}
-              className="rounded-lg px-6 py-2.5 text-sm font-semibold flex items-center gap-2"
-              style={{
-                fontFamily: FONT_BODY,
-                background: input.trim() ? '#C41E3A' : '#DCD6C4',
-                color: input.trim() ? '#F5F1E8' : '#9C9683',
-              }}
-            >
-              <Check size={16} /> Провери
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={checkAnswer}
+                disabled={!input.trim()}
+                className="rounded-lg px-6 py-2.5 text-sm font-semibold flex items-center gap-2"
+                style={{
+                  fontFamily: FONT_BODY,
+                  background: input.trim() ? '#C41E3A' : '#DCD6C4',
+                  color: input.trim() ? '#F5F1E8' : '#9C9683',
+                }}
+              >
+                <Check size={16} /> Провери
+              </button>
+              <button
+                type="button"
+                onClick={giveUp}
+                className="rounded-lg px-4 py-2.5 text-sm"
+                style={{ fontFamily: FONT_BODY, color: '#9C9683', border: '1.5px solid #DCD6C4', background: 'transparent' }}
+                title="Прикажи тачан одговор — рачуна се као нетачно"
+              >
+                Не знам
+              </button>
+            </div>
           </div>
         ) : (
           <div className="flex flex-col gap-3 items-center">
@@ -1556,6 +1588,9 @@ function Practice({ words, tags, onAnswer }) {
             )}
             {timedOut && (
               <div style={{ color: '#6B6455', fontSize: '0.8rem' }}>Истекло је време.</div>
+            )}
+            {gaveUp && (
+              <div style={{ color: '#6B6455', fontSize: '0.8rem' }}>Нема везе, ево одговора.</div>
             )}
             {feedback === 'wrong' && (
               <div className="flex items-center justify-center gap-1.5" style={{ color: '#6B6455', fontSize: '0.9rem' }}>
