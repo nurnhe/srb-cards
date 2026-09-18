@@ -53,10 +53,10 @@ router.patch(
   })
 );
 
-// Records a practice attempt. Reading the current count here rather than
-// trusting one sent by the browser keeps the increment off stale client state.
-// Still read-modify-write, not an atomic increment — fine for a single user,
-// not built for concurrent editors.
+// Records a practice attempt via an atomic increment (increment_word_answer,
+// a Postgres function — see the DB schema notes) rather than a read-then-write
+// from here, which could lose an increment between two rapid requests for the
+// same word (a double-tap, or a client retry after a flaky response).
 router.post(
   '/:id/answer',
   route(async (req, res) => {
@@ -66,22 +66,18 @@ router.post(
     }
     const field = correct ? 'correct_count' : 'wrong_count';
 
-    const current = await supabase
-      .from('words')
-      .select('correct_count, wrong_count')
-      .eq('id', req.params.id)
-      .single();
-    if (current.error || !current.data) return fail(res, 'POST /api/words/:id/answer', current.error, 404);
+    const { data, error } = await supabase.rpc('increment_word_answer', {
+      p_word_id: req.params.id,
+      p_field: field,
+    });
+    if (error) return fail(res, 'POST /api/words/:id/answer', error);
+    // returns table(...) resolves to a row array — empty means the id
+    // matched no word, the same "not found" case the old read-then-write
+    // caught via its initial select.
+    const row = data?.[0];
+    if (!row) return fail(res, 'POST /api/words/:id/answer', new Error('Word not found'), 404);
 
-    const { data, error } = await supabase
-      .from('words')
-      .update({ [field]: (current.data[field] || 0) + 1 })
-      .eq('id', req.params.id)
-      .select('correct_count, wrong_count')
-      .single();
-    if (error || !data) return fail(res, 'POST /api/words/:id/answer', error);
-
-    res.json(data);
+    res.json(row);
   })
 );
 

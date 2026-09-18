@@ -155,7 +155,13 @@ docker run --rm --name srb-cards-prod \
 - **word_links**: `word_id`, `related_word_id` (both fk → words, cascade
   delete) — symmetric relation for linking same-root words (e.g. verb ↔
   noun); both directions are inserted on link
-- **tags** / **word_tags**: many-to-many tagging, same cascade-delete pattern
+- **tags** / **word_tags**: many-to-many tagging, same cascade-delete pattern.
+  `tags` has a unique index on `lower(name)` — `ensureTag` (`backend/src/tags.js`)
+  relies on this to make its select-then-insert-with-retry-on-conflict race-free.
+- **`increment_word_answer(p_word_id uuid, p_field text)`**: Postgres function,
+  atomically increments `correct_count` or `wrong_count` and returns the new
+  values — used by `POST /api/words/:id/answer` instead of a read-then-write,
+  which could lose an increment between two rapid requests for the same word.
 - Any new table needs RLS enabled + a `using (true) with check (true)` policy
   to match the existing open-access pattern, unless deliberately changing
   that trade-off. The backend's `service_role` key bypasses RLS entirely, so
