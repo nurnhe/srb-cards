@@ -21,13 +21,24 @@ function cleanField(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+// sr/ru are single words/short phrases, safe to force fully lowercase so
+// e.g. "Blag"/"blag" collapse to one entry. An example is a full sentence —
+// doing the same to it would also lowercase any proper noun inside it, so
+// it only gets its first letter capitalized ("sentence case"), leaving the
+// rest exactly as typed.
+function capitalizeFirst(value) {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
 // Shared input handling: sr/ru are lowercased on save so "Blag"/"blag" collapse
-// to one entry; example is a full sentence and is left alone.
+// to one entry; example gets sentence case (see capitalizeFirst above). Existing
+// rows saved before this rule existed keep whatever case they already have
+// until next edited — this only normalizes what's written from here on.
 export function cleanWordFields({ sr, ru, example }) {
   return {
     sr: cleanField(sr).toLowerCase(),
     ru: cleanField(ru).toLowerCase(),
-    example: cleanField(example) || null,
+    example: capitalizeFirst(cleanField(example)) || null,
   };
 }
 
