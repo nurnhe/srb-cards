@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload, Table2, LogOut, Timer } from 'lucide-react';
+import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload, Table2, LogOut, Timer, Percent } from 'lucide-react';
 import * as api from './api';
 import {
   otherScript,
@@ -13,6 +13,7 @@ import {
   isPlausibleRussianText,
   suggestTagsFromRelatedWords,
   filterWordsByQuery,
+  computeTagAccuracy,
   isTypoCorrected,
   findLikelyTypoOf,
   pickSerbianVoice,
@@ -1696,6 +1697,34 @@ function WordStats({ correct, wrong }) {
   );
 }
 
+// Accuracy broken down by tag, using each word's own correct_count/
+// wrong_count aggregated across every tag it carries — see
+// computeTagAccuracy. Surfaces categories that need more practice, not
+// just individual hard words.
+function TagAccuracyPanel({ words, tags }) {
+  const rows = computeTagAccuracy(words, tags);
+  return (
+    <div className="rounded-lg p-3 mb-1" style={{ background: '#12192E', border: '1px solid #3A4570' }}>
+      {rows.length === 0 ? (
+        <p style={{ color: '#8892AE', fontSize: '0.78rem' }}>
+          Још нема довољно вежбања по таговима.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {rows.map((r) => (
+            <div key={r.tagId} className="flex items-center justify-between gap-3">
+              <span style={{ fontFamily: FONT_MONO, fontSize: '0.78rem', color: '#D4A54A' }}>{r.name}</span>
+              <span style={{ fontFamily: FONT_MONO, fontSize: '0.78rem', color: '#8892AE' }}>
+                {Math.round(r.accuracy * 100)}% ({r.correct}/{r.total})
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SortPill({ active, label, onClick }) {
   return (
     <button
@@ -1731,6 +1760,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
   const [searchQuery, setSearchQuery] = useState('');
   const [importState, setImportState] = useState('idle'); // idle | loading | error | done
   const [importMessage, setImportMessage] = useState('');
+  const [showTagAccuracy, setShowTagAccuracy] = useState(false);
   const importFileRef = useRef(null);
 
   const exportBackup = () => {
@@ -1960,6 +1990,16 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
             if (file) importBackup(file);
           }}
         />
+        {tags && tags.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowTagAccuracy((v) => !v)}
+            className="flex items-center gap-1.5"
+            style={{ fontFamily: FONT_MONO, fontSize: '0.72rem', color: showTagAccuracy ? '#D4A54A' : '#8892AE' }}
+          >
+            <Percent size={13} /> Тачност по тагу
+          </button>
+        )}
       </div>
       {importMessage && (
         <p
@@ -1973,6 +2013,7 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
           {importMessage}
         </p>
       )}
+      {showTagAccuracy && <TagAccuracyPanel words={words} tags={tags} />}
 
       <input
         value={searchQuery}

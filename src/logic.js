@@ -378,6 +378,35 @@ export function filterWordsByQuery(words, query) {
   });
 }
 
+// Aggregates correct/wrong counts per tag across every word carrying that
+// tag, so a whole *category* that needs work is visible ("verbs: 72%"),
+// not just individual hard words. A word with several tags contributes to
+// each of them. Sorted worst-accuracy-first, since that's the actionable
+// order — the point is surfacing what to focus on. A tag with no attempts
+// yet across any of its words is left out entirely rather than shown as
+// 0% or 100%, since neither would be a real answer.
+export function computeTagAccuracy(words, tags) {
+  const totals = {}; // tagId -> { correct, wrong }
+  (words || []).forEach((w) => {
+    const correct = w.correct_count || 0;
+    const wrong = w.wrong_count || 0;
+    if (correct === 0 && wrong === 0) return;
+    (w.tagIds || []).forEach((tagId) => {
+      if (!totals[tagId]) totals[tagId] = { correct: 0, wrong: 0 };
+      totals[tagId].correct += correct;
+      totals[tagId].wrong += wrong;
+    });
+  });
+  return (tags || [])
+    .filter((t) => totals[t.id])
+    .map((t) => {
+      const { correct, wrong } = totals[t.id];
+      const total = correct + wrong;
+      return { tagId: t.id, name: t.name, correct, wrong, total, accuracy: correct / total };
+    })
+    .sort((a, b) => a.accuracy - b.accuracy);
+}
+
 // Normalized set of acceptable answers for a card in a given direction —
 // every ru variant for sr-ru, or sr in both scripts for ru-sr.
 function answerTargets(direction, current) {
