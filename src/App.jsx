@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload, Table2, LogOut, Timer, Percent } from 'lucide-react';
 import * as api from './api';
+import { supabase } from './supabaseClient';
 import {
   otherScript,
   normalize,
@@ -648,26 +649,31 @@ function VariantsEditor({ variants, onChange, srWord }) {
   );
 }
 
-function PasswordGate({ onAuthed }) {
+// Real Supabase Auth accounts now, not a single shared password — see
+// CLAUDE.md's auth notes. Accounts are created by Kira herself via the
+// Supabase dashboard (invite-only, no self-service sign-up in this phase),
+// so this is a login form only. Success doesn't need to notify a parent —
+// App()'s onAuthStateChange listener picks up the new session on its own
+// and re-renders past this gate.
+function LoginGate() {
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(null); // null | 'wrong' | 'network'
+  const [error, setError] = useState(null);
   const [checking, setChecking] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!password || checking) return;
+    if (!email || !password || checking) return;
     setChecking(true);
     setError(null);
     try {
-      const { ok, networkError } = await api.login(password);
-      if (ok) {
-        onAuthed();
-      } else {
-        setError(networkError ? 'network' : 'wrong');
-      }
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInError) setError(signInError.message);
+    } catch (err) {
+      setError('Нема везе са сервером — покушај поново');
     } finally {
-      // Always runs, even if api.login() itself throws unexpectedly — the
-      // button must never stay stuck on "Проверавам…" with no way out.
+      // Always runs, even if signInWithPassword() itself throws unexpectedly —
+      // the button must never stay stuck on "Пријављивање…" with no way out.
       setChecking(false);
     }
   };
@@ -689,20 +695,33 @@ function PasswordGate({ onAuthed }) {
           речи <span style={{ color: '#C41E3A', fontStyle: 'italic' }}>&amp;</span> слова
         </h1>
         <input
-          type="password"
+          type="email"
           autoFocus
+          value={email}
+          onChange={(e) => {
+            setEmail(e.target.value);
+            setError(null);
+          }}
+          placeholder="имејл"
+          autoComplete="username"
+          className="w-full rounded-lg px-3 py-2.5 mb-2.5 outline-none"
+          style={{ background: '#12192E', color: '#F5F1E8', border: '1px solid #2A3355' }}
+        />
+        <input
+          type="password"
           value={password}
           onChange={(e) => {
             setPassword(e.target.value);
             setError(null);
           }}
           placeholder="лозинка"
+          autoComplete="current-password"
           className="w-full rounded-lg px-3 py-2.5 mb-3 outline-none"
           style={{ background: '#12192E', color: '#F5F1E8', border: '1px solid #2A3355' }}
         />
         {error && (
           <div className="text-sm text-center mb-3" style={{ color: '#E8A0A8' }}>
-            {error === 'network' ? 'Нема везе са сервером — покушај поново' : 'Погрешна лозинка'}
+            {error}
           </div>
         )}
         <button
@@ -711,7 +730,7 @@ function PasswordGate({ onAuthed }) {
           className="w-full rounded-lg py-2.5 font-medium"
           style={{ background: '#C41E3A', color: '#F5F1E8', opacity: checking ? 0.7 : 1 }}
         >
-          {checking ? 'Проверавам…' : 'Улаз'}
+          {checking ? 'Пријављивање…' : 'Улаз'}
         </button>
       </form>
     </div>
@@ -726,10 +745,37 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [tab, setTab] = useState('practice');
-  // Starts true if a password is already stored from a previous session —
-  // wrong/stale ones get caught and cleared by api.js's 401 handling on the
-  // first real request, not here.
-  const [authed, setAuthed] = useState(() => !!api.getStoredPassword());
+  // Derived from Supabase's own session state rather than a synchronous
+  // localStorage check — a session can't be confirmed valid without asking
+  // Supabase, so this starts null ("still checking") until getSession()
+  // resolves, then tracks onAuthStateChange from then on. authed itself
+  // stays a plain boolean (not the session object) so effects keyed on it
+  // don't refire on every silent token refresh (~every 55 min).
+  const [authed, setAuthed] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!cancelled) setAuthed(!!data.session);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthed(!!session);
+    });
+    return () => {
+      cancelled = true;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  // Logging out (or a session going invalid) should drop back to the login
+  // gate cleanly rather than showing stale data on the next sign-in.
+  useEffect(() => {
+    if (authed === false) {
+      setReady(false);
+      setWords([]);
+      setTags([]);
+    }
+  }, [authed]);
 
   const reloadAll = useCallback(async () => {
     // One request: the backend runs the four queries and stitches relatedIds
@@ -737,10 +783,10 @@ export default function App() {
     const { data, error } = await api.getVocabulary();
     if (error || !data) {
       setStorageError(true);
-      // api.js already called logout() + window.location.reload() for a 401
-      // before resolving with this same "Unauthorized" error — tell the
-      // caller so it doesn't flip the app to "ready" while that reload is
-      // still pending.
+      // api.js already called supabase.auth.signOut() for a 401 before
+      // resolving with this same "Unauthorized" error, which will flip
+      // `authed` to false via the onAuthStateChange listener — tell the
+      // caller so it doesn't flip the app to "ready" while that's pending.
       return { unauthorized: error?.message === 'Unauthorized' };
     }
     setStorageError(false);
@@ -1037,9 +1083,10 @@ export default function App() {
     );
   }, []);
 
-  if (!authed) {
-    return <PasswordGate onAuthed={() => setAuthed(true)} />;
-  }
+  // authed === null means the initial getSession() check hasn't resolved yet
+  // — render nothing rather than flashing the login form for one frame.
+  if (authed === null) return null;
+  if (!authed) return <LoginGate />;
 
   return (
     <div
@@ -1047,7 +1094,7 @@ export default function App() {
       style={{ background: '#12192E', fontFamily: FONT_BODY }}
     >
       <div className="max-w-2xl mx-auto px-5 py-8">
-        <Header onLogout={() => { api.logout(); setAuthed(false); setReady(false); }} />
+        <Header onLogout={() => supabase.auth.signOut()} />
         <TabBar tab={tab} setTab={setTab} count={words.length} />
 
         {!ready ? (

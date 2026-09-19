@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { supabase } from '../supabase.js';
 import { route, fail, isValidId } from '../http.js';
 
 const router = Router();
@@ -14,8 +13,11 @@ router.post(
     if (idA === idB) return res.status(400).json({ error: 'A word cannot link to itself' });
 
     // Idempotent on purpose — re-importing a backup re-links pairs that already
-    // exist, and that has to be a no-op rather than an error.
-    const { error } = await supabase.from('word_links').upsert(
+    // exist, and that has to be a no-op rather than an error. No user_id to
+    // set here — word_links' RLS policy derives ownership from the words
+    // being linked, which also means linking someone else's word id (even
+    // though it's invisible to this user) is rejected by that same policy.
+    const { error } = await req.supabase.from('word_links').upsert(
       [
         { word_id: idA, related_word_id: idB },
         { word_id: idB, related_word_id: idA },
@@ -41,7 +43,7 @@ router.delete(
     // Both directions in one statement, matching how POST / writes them —
     // two independent delete calls (the previous approach) could partially
     // fail, leaving a one-way "link" that nothing would ever self-heal.
-    const { error } = await supabase
+    const { error } = await req.supabase
       .from('word_links')
       .delete()
       .or(`and(word_id.eq.${idA},related_word_id.eq.${idB}),and(word_id.eq.${idB},related_word_id.eq.${idA})`);

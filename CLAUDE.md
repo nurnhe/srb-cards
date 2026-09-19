@@ -8,10 +8,11 @@ this app stores her vocabulary and quizzes her on it.
 - React (single-file component tree in `src/App.jsx`), built with Vite
 - Styling: inline styles + Tailwind utility classes (no custom Tailwind config)
 - Backend: Node + Express in `backend/`, talks to Supabase with
-  `@supabase/supabase-js`. The browser never touches the database — it calls
-  `/api/*` through `src/api.js`.
-- Data: Supabase (Postgres). Credentials come from `SUPABASE_URL` /
-  `SUPABASE_SERVICE_ROLE_KEY`, read only by the backend (`backend/src/supabase.js`).
+  `@supabase/supabase-js`. The browser never touches the database directly for
+  data — it calls `/api/*` through `src/api.js`. It does talk to Supabase Auth
+  directly, for sign-in only (`src/supabaseClient.js`).
+- Data: Supabase (Postgres), with row-level security enforcing per-user
+  isolation — see "Auth and per-user data" below.
 - Hosting: production is **https://srb.cloudopen.space/** — the backend
   refactor is merged into `main` and that's what's running there. Deploy is
   **manual**: pushing to `main` does not auto-deploy anything. There is no
@@ -22,21 +23,48 @@ app: `--target dev` builds the development image (what `run_dev.sh` uses), and
 the plain build produces the release image — built site plus API in one
 container, see "Running the release version in Docker" below.
 
-### Security — the service_role key
+### Auth and per-user data
 
-The backend uses Supabase's `service_role` key, which **bypasses RLS entirely**.
-It sits behind a single shared password (`APP_PASSWORD` in `.env`, checked in
-`backend/src/auth.js`) — every `/api/*` data route except `/api/health` and
-`/api/login` requires an `X-App-Password` header matching it. Not per-user
-accounts, just one household password, which matches the app's low-stakes
-personal scale. The frontend asks for it once (`PasswordGate` in `App.jsx`),
-stores it in `localStorage`, and sends it on every request via `src/api.js`.
+Real accounts now, via Supabase Auth (email + password) — not the old single
+shared household password. Each user's words/tags are their own, enforced at
+the database level by row-level security (RLS), not just by app-code
+filtering (see "Database schema" below for the actual policies).
 
-Even with that password check, keep the ports bound to localhost in Docker —
-which is why `run_dev.sh` publishes them on `127.0.0.1` only — and never
-rename the service_role key to anything starting with `VITE_`. Vite bakes
-`VITE_*` variables into the JavaScript, which would publish it to every
-visitor.
+- **Invite-only, no self-service sign-up.** Kira creates every account herself
+  in the Supabase Dashboard (Authentication → Users → Add User, auto-confirm
+  checked) and relays the password to that person directly — there's no
+  sign-up UI, no password-reset UI, and no email/SMTP involved. If someone's
+  locked out, Kira resets their password from the dashboard.
+- **`backend/src/auth.js`**'s `requireAuth` middleware reads the
+  `Authorization: Bearer <token>` header the frontend sends, and builds a
+  **fresh Supabase client per request** using the `anon` key with that token
+  attached (`req.supabase`). That's what makes RLS evaluate as *that specific
+  user* rather than as an admin key — every route handler queries through
+  `req.supabase`, not a shared client, and needs no manual `.eq('user_id', …)`
+  filtering because RLS already scopes what's visible. `req.userId` is also
+  set, for the few inserts that must stamp `user_id` explicitly (see schema
+  section — it's not a DB default).
+  - Gotcha worth knowing if this code gets touched again: verifying the token
+    requires `userClient.auth.getUser(token)` with the token passed
+    explicitly. Calling `getUser()` with no argument reads the client's own
+    internal session state, which a freshly-built per-request client never
+    has — every request would 401.
+- **`src/supabaseClient.js`** is a browser Supabase client used *only* for
+  auth (`signInWithPassword`, `signOut`, `getSession`,
+  `onAuthStateChange`) — not for data. The app still calls its own Express
+  backend for every data operation via `src/api.js`, which reads
+  `supabase.auth.getSession()` fresh on every request and sends the
+  session's access token as the `Authorization` header.
+- The `anon` key (`SUPABASE_ANON_KEY` backend-side, `VITE_SUPABASE_ANON_KEY`
+  frontend-side) is the one Supabase key that's *designed* to be public —
+  RLS is what actually protects the data, not secrecy of this key. There is
+  no `service_role` key anywhere in this app anymore (it bypassed RLS
+  entirely, which is exactly the opposite of what per-user isolation needs);
+  don't reintroduce one.
+
+Keep the ports bound to localhost in Docker regardless — which is why
+`run_dev.sh` publishes them on `127.0.0.1` only — this app still has no
+public-facing rate-limiting or abuse protection.
 
 ## Local dev
 
@@ -44,7 +72,7 @@ Everything runs in one Docker container — the Vite dev server and the API side
 by side, with this folder mounted inside so edits are live:
 
 ```
-cp .env.example .env   # fill in the Supabase URL + service_role key
+cp .env.example .env   # fill in the Supabase URL + anon key
 ./run_dev.sh           # http://localhost:5173
 ```
 
@@ -141,33 +169,61 @@ docker run --rm --name srb-cards-prod \
 - A host that supplies its own `PORT` is honoured automatically — the backend
   reads it and binds `0.0.0.0`.
 - The ports are published on **`127.0.0.1` only**, for the same reason as in
-  development: this container holds the `service_role` key and has no login, so
-  it must not be reachable from outside the machine. Do not publish it on a
-  public address until there is auth in front of it.
+  development: there's no rate-limiting or abuse protection in front of
+  Supabase Auth yet, so it must not be reachable from outside the machine.
+  Do not publish it on a public address without adding that first.
 - Logs: `docker logs srb-cards-prod`.
 
 ## Database schema (Supabase, all in `public` schema)
 
-- **words**: `id uuid pk`, `sr text`, `ru text` (comma-separated accepted
-  translation variants), `example text` (nullable, Serbian-only usage
-  example), `correct_count int default 0`, `wrong_count int default 0`,
+- **words**: `id uuid pk`, `user_id uuid` (fk → `auth.users`, cascade delete —
+  owner; **not null**, but see the migration note below if this ever needs
+  touching again), `sr text`, `ru text` (comma-separated accepted translation
+  variants), `example text` (nullable, Serbian-only usage example),
+  `correct_count int default 0`, `wrong_count int default 0`,
   `created_at timestamptz`
 - **word_links**: `word_id`, `related_word_id` (both fk → words, cascade
   delete) — symmetric relation for linking same-root words (e.g. verb ↔
-  noun); both directions are inserted on link
+  noun); both directions are inserted on link. No `user_id` column here —
+  ownership is derived from the `words` rows it references (see RLS below).
 - **tags** / **word_tags**: many-to-many tagging, same cascade-delete pattern.
-  `tags` has a unique index on `lower(name)` — `ensureTag` (`backend/src/tags.js`)
-  relies on this to make its select-then-insert-with-retry-on-conflict race-free.
+  `tags` also has `user_id` (same shape as `words`). Its unique index is on
+  `(user_id, lower(name))`, not just `lower(name))` — tags are per-user now, so
+  two users can each have their own "храна" tag. `ensureTag`
+  (`backend/src/tags.js`) relies on this to make its select-then-insert-
+  with-retry-on-conflict race-free, scoped to the caller's own tags via
+  `req.supabase`. `word_tags` has no `user_id` column either, same reasoning
+  as `word_links`.
 - **`increment_word_answer(p_word_id uuid, p_field text)`**: Postgres function,
   atomically increments `correct_count` or `wrong_count` and returns the new
   values — used by `POST /api/words/:id/answer` instead of a read-then-write,
   which could lose an increment between two rapid requests for the same word.
-- Any new table needs RLS enabled + a `using (true) with check (true)` policy
-  to match the existing open-access pattern, unless deliberately changing
-  that trade-off. The backend's `service_role` key bypasses RLS entirely, so
-  these policies don't gate the app anymore — they're just a floor in case
-  anything ever queries with the anon key again (e.g. from the Supabase
-  dashboard or a future browser-side call).
+  It's `SECURITY INVOKER` (Postgres's default), so RLS on `words` applies to
+  its internal `UPDATE` automatically — calling it for someone else's word id
+  affects 0 rows rather than needing its own ownership check.
+- **Row-level security is what actually enforces per-user isolation** — the
+  backend has no `service_role` key to bypass it with anymore, so these
+  policies are load-bearing, not just a floor:
+  - `words` / `tags`: `for all using (user_id = auth.uid()) with check
+    (user_id = auth.uid())` — straightforward own-row-only.
+  - `word_links` / `word_tags`: ownership is checked via an `exists` subquery
+    against the row(s) they reference (`words`/`tags`), *not* a `user_id`
+    column on the join table itself — a naive `user_id = auth.uid()` policy on
+    a join table only validates the join row's own owner, not that the
+    `word_id`/`tag_id` it points at actually belongs to that user, which
+    would let someone link/tag using another user's id.
+  - Any new table needs RLS enabled with a real per-owner policy following
+    one of these two patterns — never the old open `using (true)` pattern,
+    that only made sense back when a bypassing `service_role` key was the
+    only thing touching the tables.
+- **Inserts set `user_id` explicitly in application code** (`backend/src/routes/words.js`'s
+  `POST /`, `backend/src/tags.js`'s `ensureTag`) — there is deliberately no
+  `default auth.uid()` on the column. A default would resolve to `NULL` for
+  any request not carrying a real user JWT, and during the migration to this
+  auth model the still-live old app *was* such a request (it inserted via
+  `service_role`, which has no `sub` claim) — a `NOT NULL` column with that
+  default would have broken it instantly. Keep setting `user_id` explicitly on
+  insert rather than reintroducing a default.
 
 Schema changes ship as raw SQL Kira runs herself in Supabase's SQL Editor —
 there's no migration tool/history. When adding a column or table, give her
