@@ -216,6 +216,10 @@ docker run --rm --name srb-cards-prod \
     a join table only validates the join row's own owner, not that the
     `word_id`/`tag_id` it points at actually belongs to that user, which
     would let someone link/tag using another user's id.
+  - The original open policies (each named `public access`, `using (true)`)
+    must be **dropped** on all four tables. Postgres ORs permissive policies
+    together, so leaving one in place makes every user see everyone's data —
+    this happened during the first local test.
   - Any new table needs RLS enabled with a real per-owner policy following
     one of these two patterns — never the old open `using (true)` pattern,
     that only made sense back when a bypassing `service_role` key was the
