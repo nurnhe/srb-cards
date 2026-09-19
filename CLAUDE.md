@@ -149,11 +149,15 @@ Vite builds the site, and the Express backend serves those files itself, next to
 `/api`. So the site and the API answer on the same port, and the browser keeps
 calling `/api` with relative addresses — `VITE_API_URL` is not needed.
 
-Nothing is baked in at build time. All settings are handed to the container when
-it starts:
+The backend's settings are handed to the container when it starts. The one
+exception is the two public sign-in values, `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_ANON_KEY` — Vite bakes `VITE_*` into the site at build time, so
+they must be passed as build args or the login page will not work:
 
 ```
-docker build -t srb-cards .
+docker build \
+  --build-arg VITE_SUPABASE_URL=https://xxxx.supabase.co \
+  --build-arg VITE_SUPABASE_ANON_KEY=eyJ... -t srb-cards .
 docker run --rm --name srb-cards-prod \
   --env-file .env -p 127.0.0.1:3000:3000 srb-cards
 # http://localhost:3000
