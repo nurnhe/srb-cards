@@ -1,36 +1,36 @@
-// Single shared password gating every /api/* data route (not /api/health or
-// /api/login itself). Not per-user accounts — this is a personal app for one
-// household of users, matching the "acceptable trade-off for a low-stakes
-// personal app" philosophy already used everywhere else in this codebase
-// (see CLAUDE.md). A plain string compare is fine at this scale; no need for
-// a timing-safe comparison or hashing here.
-//
-// Now that the browser never sees the service_role key (it only ever talks
-// to this backend), a password check here is real protection, not just a
-// client-side deterrent — unlike the old direct-to-Supabase setup, there is
-// no embedded key a determined visitor could use to bypass it.
-export function requireAppPassword(req, res, next) {
-  const expected = process.env.APP_PASSWORD;
-  if (!expected) {
-    console.error('[auth] APP_PASSWORD is not set — refusing all API requests');
-    return res.status(500).json({ error: 'Server misconfigured: APP_PASSWORD not set' });
-  }
-  if (req.get('X-App-Password') !== expected) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
-}
+import { createClient } from '@supabase/supabase-js';
 
-// Lets the frontend verify a typed password before storing it, with a clear
-// success/failure signal, rather than inferring success from a side effect
-// of some other endpoint.
-export function login(req, res) {
-  const expected = process.env.APP_PASSWORD;
-  if (!expected) {
-    return res.status(500).json({ error: 'Server misconfigured: APP_PASSWORD not set' });
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+
+// Verifies the caller's Supabase session and, on success, attaches a
+// Supabase client scoped to *that user's* own JWT rather than the shared
+// service_role client — this is what makes row-level security apply as
+// them instead of bypassing it. Every route handler uses req.supabase
+// for its queries; none of them need to filter by user_id manually,
+// since RLS policies on each table already restrict what a given user's
+// client can see or touch (see CLAUDE.md's schema notes).
+export async function requireAuth(req, res, next) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.error('[auth] SUPABASE_URL / SUPABASE_ANON_KEY not set — refusing all API requests');
+    return res.status(500).json({ error: 'Server misconfigured' });
   }
-  if ((req.body || {}).password !== expected) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  res.json({ ok: true });
+
+  const authHeader = req.get('Authorization') || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false },
+  });
+  // getUser() must be given the token explicitly — called with no argument
+  // it reads the client's own internal session state instead, which this
+  // fresh per-request client never has (every request would 401).
+  const { data, error } = await userClient.auth.getUser(token);
+  if (error || !data?.user) return res.status(401).json({ error: 'Unauthorized' });
+
+  req.supabase = userClient;
+  req.userId = data.user.id;
+  next();
 }

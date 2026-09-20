@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { supabase } from '../supabase.js';
 import { ensureTag } from '../tags.js';
 import { route, fail, cleanWordFields, WORD_COLUMNS, isValidId } from '../http.js';
 
@@ -19,7 +18,13 @@ router.post(
       return res.status(400).json({ error: 'sr and ru are required' });
     }
 
-    const { data, error } = await supabase.from('words').insert(fields).select(WORD_COLUMNS).single();
+    // user_id is set explicitly here rather than relying on a DB column
+    // default — see CLAUDE.md's schema notes on why.
+    const { data, error } = await req.supabase
+      .from('words')
+      .insert({ ...fields, user_id: req.userId })
+      .select(WORD_COLUMNS)
+      .single();
     if (error || !data) return fail(res, 'POST /api/words', error);
 
     res.status(201).json({ ...data, relatedIds: [], tagIds: [] });
@@ -38,9 +43,10 @@ router.patch(
     // landed in the database rather than re-deriving it. maybeSingle (rather
     // than single) resolves with data: null and no error when the id simply
     // doesn't match any row, instead of Postgrest's ambiguous "no rows"
-    // error — letting a stale/deleted id return a clean 404 instead of a
+    // error — letting a stale/deleted id (or someone else's word, which RLS
+    // makes invisible to this query) return a clean 404 instead of a
     // generic 500.
-    const { data, error } = await supabase
+    const { data, error } = await req.supabase
       .from('words')
       .update(fields)
       .eq('id', req.params.id)
@@ -66,14 +72,14 @@ router.post(
     }
     const field = correct ? 'correct_count' : 'wrong_count';
 
-    const { data, error } = await supabase.rpc('increment_word_answer', {
+    const { data, error } = await req.supabase.rpc('increment_word_answer', {
       p_word_id: req.params.id,
       p_field: field,
     });
     if (error) return fail(res, 'POST /api/words/:id/answer', error);
     // returns table(...) resolves to a row array — empty means the id
-    // matched no word, the same "not found" case the old read-then-write
-    // caught via its initial select.
+    // matched no word (or one RLS hides from this user), the same "not
+    // found" case the old read-then-write caught via its initial select.
     const row = data?.[0];
     if (!row) return fail(res, 'POST /api/words/:id/answer', new Error('Word not found'), 404);
 
@@ -85,7 +91,7 @@ router.delete(
   '/:id',
   route(async (req, res) => {
     // word_links and word_tags rows go with it via the DB cascade.
-    const { error } = await supabase.from('words').delete().eq('id', req.params.id);
+    const { error } = await req.supabase.from('words').delete().eq('id', req.params.id);
     if (error) return fail(res, 'DELETE /api/words/:id', error);
     res.status(204).end();
   })
@@ -99,11 +105,11 @@ router.post(
     if (!String(req.body?.name ?? '').trim()) {
       return res.status(400).json({ error: 'name is required' });
     }
-    const { tag, created, error: tagError } = await ensureTag(req.body.name);
+    const { tag, created, error: tagError } = await ensureTag(req.supabase, req.userId, req.body.name);
     if (tagError || !tag) return fail(res, 'POST /api/words/:id/tags', tagError);
 
     // Idempotent for the same reason links are — re-imports must not fail.
-    const { error } = await supabase
+    const { error } = await req.supabase
       .from('word_tags')
       .upsert([{ word_id: req.params.id, tag_id: tag.id }], { onConflict: 'word_id,tag_id' });
     if (error) return fail(res, 'POST /api/words/:id/tags', error);
@@ -115,7 +121,7 @@ router.post(
 router.delete(
   '/:wordId/tags/:tagId',
   route(async (req, res) => {
-    const { error } = await supabase
+    const { error } = await req.supabase
       .from('word_tags')
       .delete()
       .eq('word_id', req.params.wordId)

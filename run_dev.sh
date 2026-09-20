@@ -58,7 +58,7 @@ fi
 
 # Build the image if it is missing (or if asked to rebuild).
 if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "Building image $IMAGE…"
+  echo "Building image ${IMAGE}…"
   docker build --target dev -t "$IMAGE" .
 fi
 

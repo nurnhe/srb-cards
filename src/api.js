@@ -1,62 +1,38 @@
 // Client for the app's own backend. Every database call goes through here —
-// the browser no longer talks to Supabase, so no database key ships in the
+// the browser talks to Supabase directly only for auth (see
+// supabaseClient.js), never for data, so no data-access key ships in the
 // bundle.
 //
 // Each function resolves to { data, error }, deliberately mirroring what
 // supabase-js used to return, so call sites in App.jsx keep their familiar
 // shape.
 
+import { supabase } from './supabaseClient';
+
 // Empty in dev: Vite proxies /api to the backend (see vite.config.js). Set
 // VITE_API_URL once the backend is deployed somewhere.
 const BASE = import.meta.env.VITE_API_URL || '';
 
-const PASSWORD_STORAGE_KEY = 'srbCardsAppPassword';
-
-export const getStoredPassword = () => localStorage.getItem(PASSWORD_STORAGE_KEY);
-export const logout = () => localStorage.removeItem(PASSWORD_STORAGE_KEY);
-
-// Verifies a typed password against the backend before storing it, so the
-// caller gets a clear yes/no rather than inferring success from some other
-// endpoint's side effect. Catches network failures (like `request()` does)
-// so a dropped connection surfaces as a distinguishable result instead of an
-// uncaught rejection — the caller can tell "wrong password" apart from
-// "couldn't reach the server" and, either way, is never left waiting forever.
-export async function login(password) {
-  try {
-    const res = await fetch(`${BASE}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    });
-    if (res.ok) {
-      localStorage.setItem(PASSWORD_STORAGE_KEY, password);
-      return { ok: true, networkError: false };
-    }
-    return { ok: false, networkError: false };
-  } catch (err) {
-    return { ok: false, networkError: true };
-  }
-}
-
 async function request(path, { method = 'GET', body } = {}) {
   try {
-    const password = getStoredPassword();
+    // Fetched fresh on every call, not cached, so Supabase's own automatic
+    // token refresh (the access token is short-lived) is always picked up.
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
     const res = await fetch(`${BASE}/api${path}`, {
       method,
       headers: {
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-        ...(password ? { 'X-App-Password': password } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
 
     if (res.status === 401) {
-      // The stored password is missing/stale (e.g. changed on the server) —
-      // drop it and reload so the app falls back to the login screen instead
-      // of sitting on a dead session showing the generic save-failed banner
-      // forever.
-      logout();
-      window.location.reload();
+      // The session is missing/stale (e.g. revoked) — sign out so the app
+      // falls back to the login screen instead of sitting on a dead session
+      // showing the generic save-failed banner forever.
+      await supabase.auth.signOut();
       return { data: null, error: new Error('Unauthorized') };
     }
     if (!res.ok) {
