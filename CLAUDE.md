@@ -295,7 +295,9 @@ in the same change.
   Existing rows were not retroactively migrated when this was added.
 - **Translation variants**: `ru` is a comma-separated list; any variant
   matching the input (normalized: trimmed, lowercased, punctuation
-  stripped) counts as correct. `VariantsEditor` component manages this as
+  stripped) counts as correct. A comma always separates translations —
+  `mergeVariants` splits anything typed or picked with a comma into separate
+  chips, so no translation ever contains a comma. `VariantsEditor` component manages this as
   chips in the UI.
 - **Practice deck**: `Practice` draws from a shuffled "deck" (Fisher–Yates)
   that guarantees every word in the current pool appears once before any

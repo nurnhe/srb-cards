@@ -29,6 +29,7 @@ import {
   posTagNamesFromHeadingIds,
   wordsNeedingPartOfSpeech,
   PART_OF_SPEECH_TAG_NAMES,
+  mergeVariants,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -1015,5 +1016,35 @@ describe('wordsNeedingPartOfSpeech', () => {
 
   it('exposes the tag names it looks for', () => {
     expect(PART_OF_SPEECH_TAG_NAMES).toEqual(expect.arrayContaining(['glagol', 'imenica', 'pridev']));
+  });
+});
+
+describe('mergeVariants', () => {
+  it('adds a single translation, trimmed and lowercased', () => {
+    expect(mergeVariants([], '  Делать ')).toEqual(['делать']);
+    expect(mergeVariants(['делать'], 'работать')).toEqual(['делать', 'работать']);
+  });
+
+  it('splits a comma into separate translations instead of one chip with a comma', () => {
+    expect(mergeVariants([], 'да, конечно')).toEqual(['да', 'конечно']);
+    expect(mergeVariants(['да'], 'конечно, разумеется, да')).toEqual(['да', 'конечно', 'разумеется']);
+  });
+
+  it('ignores repeats in any letter case, and empty input', () => {
+    expect(mergeVariants(['делать'], 'ДЕЛАТЬ')).toEqual(['делать']);
+    expect(mergeVariants(['делать'], '')).toEqual(['делать']);
+    expect(mergeVariants(['делать'], ' , ,')).toEqual(['делать']);
+  });
+
+  it('never leaves a comma inside a translation, so every one can be typed as an answer', () => {
+    const merged = mergeVariants(['раз'], 'два, три ,четыре');
+    expect(merged.every((v) => !v.includes(','))).toBe(true);
+    expect(merged.join(', ').split(',').map((x) => x.trim())).toEqual(merged);
+  });
+
+  it('does not change the list it was given', () => {
+    const list = ['а'];
+    mergeVariants(list, 'б');
+    expect(list).toEqual(['а']);
   });
 });
