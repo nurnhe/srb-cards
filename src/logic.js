@@ -604,76 +604,37 @@ export function buildWordFamilies(words) {
   });
 }
 
-// Places a family's words on a flat picture: linked words are pulled toward
-// each other and all words push apart, then the result is scaled (keeping its
-// proportions) to fit inside width x height with `pad` (or `padX` / `padY`) to spare. Fully deterministic (no randomness), so
-// the same family always draws the same way. Returns { [wordId]: { x, y } }.
-export function layoutFamily(ids, edges, { width = 560, height = 300, pad = 60, padX = pad, padY = pad } = {}) {
-  const n = ids.length;
-  const pos = {};
-  if (n === 1) return { [ids[0]]: { x: width / 2, y: height / 2 } };
+// Looks like a verb's infinitive: Serbian ends in -ti / -ći (either script)
+// and the Russian translation ends in -ть / -чь / -ти. Needing both keeps most
+// nouns out (a Serbian noun ending in -ti is rare, and its Russian translation
+// usually differs). Not perfect: a Russian noun such as кость also ends in -ть.
+export function looksLikeVerb(word) {
+  const sr = String(word.sr || '').trim().toLowerCase();
+  const ru = String(word.ru || '').split(',')[0].trim().toLowerCase();
+  return /(ti|ći|ти|ћи)$/.test(sr) && /(ть|чь|ти)$/.test(ru);
+}
 
-  const pts = ids.map((id, i) => {
-    const angle = (2 * Math.PI * i) / n;
-    return { id, x: Math.cos(angle), y: Math.sin(angle), dx: 0, dy: 0 };
+// The word that heads a family: the most basic one. A verb always beats a
+// noun or adjective (pisati rather than pisac); among verbs, or among
+// non-verbs when there is no verb, the shortest wins (raditi rather than
+// doraditi or uraditi). Ties go to the word with more links, then to
+// alphabetical order, so the choice never flips between visits.
+// `family` comes from buildWordFamilies.
+export function pickFamilyRoot(family, wordsById) {
+  const degree = {};
+  family.ids.forEach((id) => (degree[id] = 0));
+  family.edges.forEach(([a, b]) => {
+    degree[a] += 1;
+    degree[b] += 1;
   });
-  const index = new Map(pts.map((p, i) => [p.id, i]));
-
-  for (let step = 0; step < 300; step++) {
-    const cooling = 1 - step / 300;
-    for (const p of pts) {
-      p.dx = 0;
-      p.dy = 0;
-    }
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        let vx = pts[i].x - pts[j].x;
-        let vy = pts[i].y - pts[j].y;
-        const dist2 = Math.max(vx * vx + vy * vy, 0.01);
-        const push = 2 / dist2;
-        vx *= push;
-        vy *= push;
-        pts[i].dx += vx;
-        pts[i].dy += vy;
-        pts[j].dx -= vx;
-        pts[j].dy -= vy;
-      }
-    }
-    for (const [a, b] of edges) {
-      const pa = pts[index.get(a)];
-      const pb = pts[index.get(b)];
-      const vx = (pb.x - pa.x) * 0.15;
-      const vy = (pb.y - pa.y) * 0.15;
-      pa.dx += vx;
-      pa.dy += vy;
-      pb.dx -= vx;
-      pb.dy -= vy;
-    }
-    for (const p of pts) {
-      p.x += p.dx * 0.5 * cooling;
-      p.y += p.dy * 0.5 * cooling;
-    }
-  }
-
-  const xs = pts.map((p) => p.x);
-  const ys = pts.map((p) => p.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  // One scale for both directions, so a chain stays a chain instead of being
-  // stretched into a zigzag, then centred inside the picture.
-  const spanX = maxX - minX;
-  const spanY = maxY - minY;
-  const innerW = width - 2 * padX;
-  const innerH = height - 2 * padY;
-  const scale = Math.min(spanX > 1e-9 ? innerW / spanX : Infinity, spanY > 1e-9 ? innerH / spanY : Infinity);
-  const k = Number.isFinite(scale) ? scale : 0;
-  for (const p of pts) {
-    pos[p.id] = {
-      x: width / 2 + (p.x - (minX + maxX) / 2) * k,
-      y: height / 2 + (p.y - (minY + maxY) / 2) * k,
-    };
-  }
-  return pos;
+  const verbs = family.ids.filter((id) => looksLikeVerb(wordsById[id]));
+  const candidates = verbs.length > 0 ? verbs : family.ids;
+  const sorted = [...candidates].sort((a, b) => {
+    const wa = wordsById[a];
+    const wb = wordsById[b];
+    if (wa.sr.length !== wb.sr.length) return wa.sr.length - wb.sr.length;
+    if (degree[a] !== degree[b]) return degree[b] - degree[a];
+    return wa.sr.localeCompare(wb.sr);
+  });
+  return sorted[0];
 }

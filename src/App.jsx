@@ -23,7 +23,7 @@ import {
   parseImportData,
   stripPitchAccent,
   buildWordFamilies,
-  layoutFamily,
+  pickFamilyRoot,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -1368,84 +1368,8 @@ function TabBar({ tab, setTab, count }) {
 
 /* ---------------- FAMILIES ---------------- */
 
-const FAMILY_GRAPH_WIDTH = 440;
-
-// One family drawn as a small picture: a box per word (Serbian on top, the
-// first Russian translation underneath), a line for every link.
-function FamilyGraph({ family, wordsById }) {
-  const n = family.ids.length;
-  const height = n <= 2 ? 130 : n <= 5 ? 300 : 420;
-  const pos = layoutFamily(family.ids, family.edges, {
-    width: FAMILY_GRAPH_WIDTH,
-    height,
-    padX: 70,
-    padY: 40,
-  });
-  const boxHeight = 44;
-
-  return (
-    <svg
-      viewBox={`0 0 ${FAMILY_GRAPH_WIDTH} ${height}`}
-      className="w-full"
-      role="img"
-      aria-label={family.ids.map((id) => wordsById[id].sr).join(', ')}
-    >
-      {family.edges.map(([a, b]) => (
-        <line
-          key={`${a}-${b}`}
-          x1={pos[a].x}
-          y1={pos[a].y}
-          x2={pos[b].x}
-          y2={pos[b].y}
-          stroke="#3A4570"
-          strokeWidth="2"
-        />
-      ))}
-      {family.ids.map((id) => {
-        const w = wordsById[id];
-        const ru = parseVariants(w.ru)[0] || '';
-        const ruShort = ru.length > 18 ? `${ru.slice(0, 17)}…` : ru;
-        const boxWidth = Math.max(70, Math.max(w.sr.length * 10, ruShort.length * 7) + 24);
-        const { x, y } = pos[id];
-        return (
-          <g key={id}>
-            <title>{`${w.sr} — ${w.ru}`}</title>
-            <rect
-              x={x - boxWidth / 2}
-              y={y - boxHeight / 2}
-              width={boxWidth}
-              height={boxHeight}
-              rx="10"
-              fill="#1B2440"
-              stroke="#D4A54A"
-              strokeWidth="1.5"
-            />
-            <text
-              x={x}
-              y={y - 3}
-              textAnchor="middle"
-              fill="#F5F1E8"
-              style={{ fontFamily: FONT_DISPLAY, fontSize: 17 }}
-            >
-              {w.sr}
-            </text>
-            <text
-              x={x}
-              y={y + 13}
-              textAnchor="middle"
-              fill="#8892AE"
-              style={{ fontFamily: FONT_BODY, fontSize: 12 }}
-            >
-              {ruShort}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
-// Every group of words linked to each other, biggest first.
+// Every group of words linked to each other, biggest first. Each family is a
+// card: the most basic word on top, the words built from it listed below.
 function FamiliesView({ words, goToList }) {
   const families = useMemo(() => buildWordFamilies(words), [words]);
   const wordsById = useMemo(() => Object.fromEntries(words.map((w) => [w.id, w])), [words]);
@@ -1468,21 +1392,38 @@ function FamiliesView({ words, goToList }) {
   }
 
   return (
-    <div className="space-y-4">
-      <div
-        style={{ fontFamily: FONT_MONO, color: '#5C6690', fontSize: '0.75rem', letterSpacing: 1 }}
-      >
+    <div className="space-y-3">
+      <div style={{ fontFamily: FONT_MONO, color: '#5C6690', fontSize: '0.75rem', letterSpacing: 1 }}>
         {families.length} ПОРОДИЦА
       </div>
-      {families.map((family) => (
-        <div
-          key={family.ids.slice().sort().join('|')}
-          className="rounded-xl p-3"
-          style={{ background: '#161E38', border: '1px solid #2A3355' }}
-        >
-          <FamilyGraph family={family} wordsById={wordsById} />
-        </div>
-      ))}
+      {families.map((family) => {
+        const rootId = pickFamilyRoot(family, wordsById);
+        const members = family.ids
+          .filter((id) => id !== rootId)
+          .map((id) => wordsById[id])
+          .sort((a, b) => srCollator.compare(a.sr, b.sr));
+        const root = wordsById[rootId];
+        return (
+          <div
+            key={family.ids.slice().sort().join('|')}
+            className="rounded-xl px-4 py-3"
+            style={{ background: '#1B2440', border: '1px solid #2A3355' }}
+          >
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1.15rem' }}>{root.sr}</span>
+              <span style={{ fontFamily: FONT_BODY, color: '#8892AE', fontSize: '0.85rem' }}>{root.ru}</span>
+            </div>
+            <div className="mt-2 ml-1 pl-3 space-y-1" style={{ borderLeft: '2px solid #D4A54A' }}>
+              {members.map((m) => (
+                <div key={m.id} className="flex items-baseline gap-2 flex-wrap">
+                  <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>{m.sr}</span>
+                  <span style={{ fontFamily: FONT_BODY, color: '#8892AE', fontSize: '0.8rem' }}>{m.ru}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

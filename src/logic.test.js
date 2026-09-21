@@ -27,7 +27,8 @@ import {
   parseImportData,
   stripPitchAccent,
   buildWordFamilies,
-  layoutFamily,
+  pickFamilyRoot,
+  looksLikeVerb,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -1015,45 +1016,69 @@ describe('buildWordFamilies', () => {
   });
 });
 
-describe('layoutFamily', () => {
-  const opts = { width: 560, height: 300, pad: 60 };
-
-  it('puts a single word in the middle', () => {
-    expect(layoutFamily(['a'], [], opts)).toEqual({ a: { x: 280, y: 150 } });
+describe('looksLikeVerb', () => {
+  it('recognises infinitives in either script', () => {
+    expect(looksLikeVerb({ sr: 'raditi', ru: 'делать' })).toBe(true);
+    expect(looksLikeVerb({ sr: 'moći', ru: 'мочь' })).toBe(true);
+    expect(looksLikeVerb({ sr: 'ићи', ru: 'идти' })).toBe(true);
+    expect(looksLikeVerb({ sr: 'радити', ru: 'делать, работать' })).toBe(true);
   });
 
-  it('gives every word its own spot inside the picture', () => {
-    const ids = ['a', 'b', 'c', 'd', 'e'];
-    const edges = [['a', 'b'], ['b', 'c'], ['c', 'd'], ['d', 'e']];
-    const pos = layoutFamily(ids, edges, opts);
-    const seen = new Set();
-    for (const id of ids) {
-      const { x, y } = pos[id];
-      expect(Number.isFinite(x) && Number.isFinite(y)).toBe(true);
-      expect(x).toBeGreaterThanOrEqual(opts.pad - 0.001);
-      expect(x).toBeLessThanOrEqual(opts.width - opts.pad + 0.001);
-      expect(y).toBeGreaterThanOrEqual(opts.pad - 0.001);
-      expect(y).toBeLessThanOrEqual(opts.height - opts.pad + 0.001);
-      seen.add(`${x.toFixed(1)},${y.toFixed(1)}`);
-    }
-    expect(seen.size).toBe(ids.length);
+  it('does not take nouns for verbs', () => {
+    expect(looksLikeVerb({ sr: 'pisac', ru: 'писатель' })).toBe(false);
+    expect(looksLikeVerb({ sr: 'radnik', ru: 'рабочий' })).toBe(false);
+    expect(looksLikeVerb({ sr: 'pisati', ru: 'писатель' })).toBe(false);
   });
 
-  it('draws two linked words apart from each other', () => {
-    const pos = layoutFamily(['a', 'b'], [['a', 'b']], opts);
-    expect(Math.hypot(pos.a.x - pos.b.x, pos.a.y - pos.b.y)).toBeGreaterThan(50);
+  it('copes with missing text', () => {
+    expect(looksLikeVerb({})).toBe(false);
+  });
+});
+
+describe('pickFamilyRoot', () => {
+  const w = (id, sr, relatedIds = [], ru = 'x') => ({ id, sr, ru, relatedIds });
+  const rootOf = (words) => {
+    const byId = Object.fromEntries(words.map((x) => [x.id, x]));
+    return pickFamilyRoot(buildWordFamilies(words)[0], byId);
+  };
+
+  it('picks the shortest word, the most basic form', () => {
+    const words = [w('a', 'doraditi', ['b']), w('b', 'raditi', ['a', 'c']), w('c', 'uraditi', ['b'])];
+    expect(rootOf(words)).toBe('b');
   });
 
-  it('is repeatable: the same family always draws the same way', () => {
-    const ids = ['a', 'b', 'c', 'd'];
-    const edges = [['a', 'b'], ['a', 'c'], ['a', 'd']];
-    expect(layoutFamily(ids, edges, opts)).toEqual(layoutFamily(ids, edges, opts));
+  it('does not depend on the order the words arrive in', () => {
+    const words = [w('c', 'uraditi', ['b']), w('b', 'raditi', ['a', 'c']), w('a', 'doraditi', ['b'])];
+    expect(rootOf(words)).toBe('b');
   });
 
-  it('handles a bigger family without breaking', () => {
-    const ids = Array.from({ length: 30 }, (_, i) => `w${i}`);
-    const edges = ids.slice(1).map((id, i) => [ids[i], id]);
-    const pos = layoutFamily(ids, edges, opts);
-    expect(Object.values(pos).every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true);
+  it('breaks a tie by the number of links', () => {
+    // raditi and radnik are both 6 letters; raditi has 3 links, radnik 1.
+    const words = [
+      w('1', 'raditi', ['2', '3', '4']),
+      w('2', 'doraditi', ['1']),
+      w('3', 'uraditi', ['1']),
+      w('4', 'radnik', ['1']),
+    ];
+    expect(rootOf(words)).toBe('1');
+  });
+
+  it('puts a verb above a shorter noun', () => {
+    const words = [w('n', 'pisac', ['v'], 'писатель'), w('v', 'pisati', ['n'], 'писать')];
+    expect(rootOf(words)).toBe('v');
+  });
+
+  it('picks the shortest verb when there are several', () => {
+    const words = [
+      w('1', 'doraditi', ['2'], 'доделать'),
+      w('2', 'raditi', ['1', '3'], 'делать'),
+      w('3', 'radnik', ['2'], 'рабочий'),
+    ];
+    expect(rootOf(words)).toBe('2');
+  });
+
+  it('breaks a full tie alphabetically', () => {
+    const words = [w('b', 'pisan', ['a']), w('a', 'pisac', ['b'])];
+    expect(rootOf(words)).toBe('a');
   });
 });
