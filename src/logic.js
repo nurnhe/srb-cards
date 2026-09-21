@@ -604,14 +604,16 @@ export function buildWordFamilies(words) {
   });
 }
 
-// Looks like a verb's infinitive: Serbian ends in -ti / -ći (either script)
-// and the Russian translation ends in -ть / -чь / -ти. Needing both keeps most
-// nouns out (a Serbian noun ending in -ti is rare, and its Russian translation
-// usually differs). Not perfect: a Russian noun such as кость also ends in -ть.
+// Looks like a verb's infinitive: Serbian ends in -ti / -ći (either script,
+// optionally followed by the reflexive "se") and the Russian translation ends
+// in -ть / -чь / -ти (optionally with the reflexive -ся / -сь, as in
+// гордиться). Needing both keeps most nouns out (a Serbian noun ending in -ti
+// is rare, and its Russian translation usually differs). Not perfect: a
+// Russian noun such as кость also ends in -ть.
 export function looksLikeVerb(word) {
   const sr = String(word.sr || '').trim().toLowerCase();
   const ru = String(word.ru || '').split(',')[0].trim().toLowerCase();
-  return /(ti|ći|ти|ћи)$/.test(sr) && /(ть|чь|ти)$/.test(ru);
+  return /(ti|ći|ти|ћи)(\s+(se|се))?$/.test(sr) && /(ть|чь|ти)(ся|сь)?$/.test(ru);
 }
 
 // The word that heads a family: the most basic one. A verb always beats a

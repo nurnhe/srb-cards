@@ -1025,6 +1025,13 @@ describe('looksLikeVerb', () => {
     expect(looksLikeVerb({ sr: 'радити', ru: 'делать, работать' })).toBe(true);
   });
 
+  it('recognises reflexive verbs', () => {
+    expect(looksLikeVerb({ sr: 'ponositi', ru: 'гордиться' })).toBe(true);
+    expect(looksLikeVerb({ sr: 'ponositi se', ru: 'гордиться' })).toBe(true);
+    expect(looksLikeVerb({ sr: 'смејати се', ru: 'смеяться' })).toBe(true);
+    expect(looksLikeVerb({ sr: 'bojati se', ru: 'бояться, опасаться' })).toBe(true);
+  });
+
   it('does not take nouns for verbs', () => {
     expect(looksLikeVerb({ sr: 'pisac', ru: 'писатель' })).toBe(false);
     expect(looksLikeVerb({ sr: 'radnik', ru: 'рабочий' })).toBe(false);
@@ -1062,6 +1069,15 @@ describe('pickFamilyRoot', () => {
       w('4', 'radnik', ['1']),
     ];
     expect(rootOf(words)).toBe('1');
+  });
+
+  it('puts a reflexive verb above the noun it comes from (ponos / ponositi)', () => {
+    const words = [
+      w('n', 'ponos', ['v', 'a'], 'гордость'),
+      w('a', 'ponosan', ['n'], 'гордый'),
+      w('v', 'ponositi', ['n'], 'гордиться'),
+    ];
+    expect(rootOf(words)).toBe('v');
   });
 
   it('puts a verb above a shorter noun', () => {
