@@ -268,9 +268,11 @@ docker run --rm --name srb-cards-prod \
 
 Schema changes ship as raw SQL Kira runs herself in Supabase's SQL Editor —
 there's no migration tool/history. When adding a column or table, give her
-the exact SQL, prefer `if not exists` so it's safe to re-run, and update
-`supabase/schema.sql` (the from-scratch version used for the test database)
-in the same change.
+the exact SQL, prefer `if not exists` so it's safe to re-run, add it as the
+next numbered file in `supabase/migrations/` (the record of what was run — see
+its README, which also tracks whether it has run in the real and test
+projects), and update `supabase/schema.sql` (the from-scratch version used for
+the test database) in the same change.
 
 ## Key conventions in `App.jsx`
 

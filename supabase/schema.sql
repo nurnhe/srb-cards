@@ -4,7 +4,8 @@
 --
 -- This describes the finished state of the production database, including
 -- per-user ownership and row-level security. When production's schema changes,
--- update this file in the same change so the test database can be rebuilt.
+-- update this file in the same change so the test database can be rebuilt, and
+-- add the SQL that was run to supabase/migrations/ (see the README there).
 
 -- Words ---------------------------------------------------------------------
 create table if not exists public.words (
@@ -56,6 +57,20 @@ begin
   ) using p_word_id;
 end;
 $$;
+
+-- Indexes for the lookups the security rules and deletes rely on ---------------
+-- (tags is covered by its unique index above, which starts with user_id)
+create index if not exists words_user_id_idx           on public.words (user_id);
+create index if not exists word_tags_tag_id_idx        on public.word_tags (tag_id);
+create index if not exists word_links_related_word_idx on public.word_links (related_word_id);
+
+-- Old open policies: a database created by an earlier version of the app has
+-- these, and Postgres allows a row if ANY policy allows it — leaving them makes
+-- everyone's data visible to everyone. Harmless on a fresh project. ------------
+drop policy if exists "public access" on public.words;
+drop policy if exists "public access" on public.tags;
+drop policy if exists "public access" on public.word_links;
+drop policy if exists "public access" on public.word_tags;
 
 -- Row-level security: each person sees and changes only their own data -------
 alter table public.words enable row level security;
