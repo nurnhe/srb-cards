@@ -1,18 +1,22 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload, Table2, LogOut, Timer, Percent } from 'lucide-react';
+import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Download, Upload, Table2, LogOut, Timer, Percent } from 'lucide-react';
 import * as api from './api';
 import {
   fetchExample,
   fetchRelatedWordsFromWiktionary,
   fetchPartsOfSpeechFromWiktionary,
-  fetchIpaFromWiktionary,
   fetchInflectionTables,
   fetchTranslationSuggestions,
-  getVoicesAsync,
 } from './wiktionary';
 import { getSupabase } from './supabaseClient';
 import { FONT_DISPLAY, FONT_BODY, FONT_MONO, useGoogleFonts } from './theme';
 import { LoginGate, NewPasswordGate } from './Auth';
+import { PronounceButton } from './components/PronounceButton';
+import { IpaText } from './components/IpaText';
+import { InflectionTables } from './components/InflectionTables';
+import { VariantsEditor } from './components/VariantsEditor';
+import { WordStats } from './components/WordStats';
+import { DirectionPill, SortPill, TagFilterPill } from './components/Pills';
 import {
   otherScript,
   normalize,
@@ -26,390 +30,10 @@ import {
   computeTagAccuracy,
   isTypoCorrected,
   findLikelyTypoOf,
-  pickSerbianVoice,
-  googleTranslateTtsUrl,
   buildExportData,
   parseImportData,
-  mergeVariants,
   wordsNeedingPartOfSpeech,
 } from './logic';
-
-// Neither Google Translate's TTS audio nor the browser SpeechSynthesis
-// fallback held up in testing — kept the code in place (a better free
-// source may turn up later) but hidden behind this flag rather than
-// deleted, per Kira's request. IPA text (below) is unaffected by this —
-// it's a separate, always-on feature.
-const AUDIO_PLAYBACK_ENABLED = false;
-
-// Speaker button that plays a Serbian word's real pronunciation via
-// Google Translate's TTS audio (see googleTranslateTtsUrl — unofficial
-// endpoint, best-effort), falling back to the browser's SpeechSynthesis
-// API only if that fails to play. Currently hidden — see
-// AUDIO_PLAYBACK_ENABLED above.
-function PronounceButton({ text, size = 15 }) {
-  const [playState, setPlayState] = useState('idle'); // idle | loading | playing
-  const [usedFallback, setUsedFallback] = useState(false);
-  const [hasNativeVoice, setHasNativeVoice] = useState(true);
-
-  // Per-word state shouldn't leak across cards in Practice, where this
-  // component instance is reused as `text` changes underneath it.
-  useEffect(() => {
-    setPlayState('idle');
-    setUsedFallback(false);
-    window.speechSynthesis?.cancel();
-  }, [text]);
-
-  useEffect(() => {
-    if (!AUDIO_PLAYBACK_ENABLED || !('speechSynthesis' in window)) return;
-    let cancelled = false;
-    getVoicesAsync().then((voices) => {
-      if (!cancelled) setHasNativeVoice(!!pickSerbianVoice(voices));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (!AUDIO_PLAYBACK_ENABLED || !text?.trim()) return null;
-  const cleanText = text.trim();
-
-  const speakViaBrowser = async () => {
-    if (!('speechSynthesis' in window)) {
-      setPlayState('idle');
-      return;
-    }
-    setUsedFallback(true);
-    const voices = await getVoicesAsync();
-    const voice = pickSerbianVoice(voices);
-    const utter = new SpeechSynthesisUtterance(cleanText);
-    utter.lang = voice ? voice.lang : 'sr-RS';
-    if (voice) utter.voice = voice;
-    utter.onstart = () => setPlayState('playing');
-    utter.onend = () => setPlayState('idle');
-    utter.onerror = () => setPlayState('idle');
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utter);
-  };
-
-  const play = (e) => {
-    e.stopPropagation();
-    setPlayState('loading');
-    const audio = new Audio(googleTranslateTtsUrl(cleanText));
-    audio.onplay = () => setPlayState('playing');
-    audio.onended = () => setPlayState('idle');
-    audio.onerror = () => speakViaBrowser();
-    audio.play().catch(() => speakViaBrowser());
-  };
-
-  const title = usedFallback
-    ? hasNativeVoice
-      ? 'Изговори (резервни изговор — Google TTS није успео)'
-      : 'Изговори (резервни изговор, нема српског гласа на овом уређају)'
-    : 'Изговори';
-
-  return (
-    <button
-      type="button"
-      onClick={play}
-      title={title}
-      aria-label={`Изговори ${cleanText}`}
-      style={{ color: playState !== 'idle' ? '#D4A54A' : '#8892AE', lineHeight: 0 }}
-    >
-      {playState === 'loading' ? <Loader2 size={size} className="animate-spin" /> : <Volume2 size={size} />}
-    </button>
-  );
-}
-
-// Cache of sr word (normalized) -> IPA text ('' = looked up, none found),
-// shared across every IpaText instance for the life of the tab — the
-// Words list alone can render 100+ of these, and repeat views of the
-// same word in Practice shouldn't re-fetch.
-const ipaCache = new Map();
-
-// Shows a Serbian word's IPA transcription from Wiktionary — always on
-// (no click needed), Serbian-only (Kira: "Transcription for Russian
-// words is not needed"). Fetches lazily once the element actually
-// scrolls into view rather than on mount, so the Words list doesn't fire
-// 100+ simultaneous external requests the moment it renders. Also
-// debounced, since this same component sits behind the live sr input on
-// Add Word — without it, every keystroke while typing a word would fire
-// its own Wiktionary request for that in-progress fragment. Shows
-// nothing while loading or if no transcription was found — this is a
-// best-effort bonus, not a required element.
-function IpaText({ text, size = '0.75em' }) {
-  const ref = useRef(null);
-  const [visible, setVisible] = useState(false);
-  const [ipa, setIpa] = useState(null); // null = not fetched yet, '' = none found
-  const key = normalize(text || '');
-
-  useEffect(() => {
-    // The span (and thus ref.current) doesn't exist yet on the render
-    // where text is still empty — re-run this once text shows up, not
-    // just when `visible` itself changes, or the observer never gets
-    // attached at all for a field that starts empty (e.g. Add Word's sr
-    // input).
-    if (!ref.current || visible) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          setVisible(true);
-          obs.disconnect();
-        }
-      },
-      { rootMargin: '200px' }
-    );
-    obs.observe(ref.current);
-    return () => obs.disconnect();
-  }, [visible, key]);
-
-  useEffect(() => {
-    setIpa(null);
-  }, [key]);
-
-  useEffect(() => {
-    if (!visible || !key || !text?.trim()) return;
-    if (ipaCache.has(key)) {
-      setIpa(ipaCache.get(key));
-      return;
-    }
-    let cancelled = false;
-    const debounce = setTimeout(() => {
-      fetchIpaFromWiktionary(text.trim())
-        .then((found) => {
-          ipaCache.set(key, found || '');
-          if (!cancelled) setIpa(found || '');
-        })
-        .catch(() => {
-          // Deliberately not cached — this was a transient failure (network
-          // blip, Wiktionary briefly erroring), not a real "no IPA exists"
-          // answer, and caching it here would suppress the display for this
-          // word for the rest of the tab session with no way to retry.
-          if (!cancelled) setIpa('');
-        });
-    }, 400);
-    return () => {
-      cancelled = true;
-      clearTimeout(debounce);
-    };
-  }, [visible, key, text]);
-
-  if (!text?.trim()) return null;
-
-  return (
-    <span ref={ref} style={{ fontFamily: FONT_MONO, fontSize: size, color: '#8892AE' }}>
-      {ipa}
-    </span>
-  );
-}
-
-// Renders the declension/conjugation tables fetched by
-// fetchInflectionTables — a plain HTML table per Wiktionary table,
-// preserving its original colSpan/rowSpan so multi-column headers (e.g.
-// "singular"/"plural" spanning several forms) still line up correctly.
-function InflectionTables({ tables }) {
-  return (
-    <div className="flex flex-col gap-4">
-      {tables.map((table, i) => (
-        <div key={i} className="overflow-x-auto">
-          {table.caption && (
-            <p style={{ color: '#8892AE', fontSize: '0.72rem', fontFamily: FONT_MONO, marginBottom: 4 }}>
-              {table.caption}
-            </p>
-          )}
-          <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-            <tbody>
-              {table.rows.map((row, ri) => (
-                <tr key={ri}>
-                  {row.cells.map((cell, ci) =>
-                    cell.isHeader ? (
-                      <th
-                        key={ci}
-                        colSpan={cell.colSpan}
-                        rowSpan={cell.rowSpan}
-                        style={{
-                          border: '1px solid #2A3355',
-                          padding: '4px 8px',
-                          color: '#D4A54A',
-                          fontWeight: 600,
-                          textAlign: 'left',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {cell.text}
-                      </th>
-                    ) : (
-                      <td
-                        key={ci}
-                        colSpan={cell.colSpan}
-                        rowSpan={cell.rowSpan}
-                        style={{
-                          border: '1px solid #2A3355',
-                          padding: '4px 8px',
-                          color: '#F5F1E8',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {cell.text}
-                      </td>
-                    )
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// Manages a list of accepted translation variants as chips: manual add,
-// remove, plus one-click suggestions fetched from a translation API.
-function VariantsEditor({ variants, onChange, srWord }) {
-  const [draft, setDraft] = useState('');
-  const [suggestions, setSuggestions] = useState([]);
-  const [suggestState, setSuggestState] = useState('idle'); // idle | loading | notfound | error
-  // srWord is a prop, not state this component sets itself — this ref tracks
-  // its latest value (no deps, so it updates after every render) so suggest()
-  // can tell a response apart from a newer request for a different word.
-  const srWordRef = useRef(srWord);
-  useEffect(() => {
-    srWordRef.current = srWord;
-  });
-
-  const addVariant = (text) => {
-    const next = mergeVariants(variants, text);
-    if (next.length !== variants.length) onChange(next);
-  };
-
-  const removeVariant = (text) => {
-    onChange(variants.filter((v) => v !== text));
-  };
-
-  const commitDraft = () => {
-    addVariant(draft);
-    setDraft('');
-  };
-
-  const suggest = async () => {
-    const word = srWord.trim();
-    if (!word) return;
-    setSuggestState('loading');
-    try {
-      const found = await fetchTranslationSuggestions(word);
-      // The word field may have moved on to a different word while this was
-      // in flight — a slower, now-stale response must not overwrite
-      // suggestions for whatever's showing now.
-      if (srWordRef.current.trim() !== word) return;
-      const fresh = found.filter((f) => !variants.some((v) => v.toLowerCase() === f.toLowerCase()));
-      if (fresh.length === 0) {
-        setSuggestState('notfound');
-        setSuggestions([]);
-      } else {
-        setSuggestions(fresh);
-        setSuggestState('idle');
-      }
-    } catch (e) {
-      if (srWordRef.current.trim() !== word) return;
-      setSuggestState('error');
-      setSuggestions([]);
-    }
-  };
-
-  return (
-    <div>
-      {variants.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {variants.map((v) => (
-            <span
-              key={v}
-              className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
-              style={{ background: '#F5F1E8', color: '#1C2333', fontSize: '0.85rem' }}
-            >
-              {v}
-              <button
-                type="button"
-                onClick={() => removeVariant(v)}
-                aria-label={`Уклони ${v}`}
-                style={{ color: '#A31C33', lineHeight: 1, fontWeight: 700 }}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-
-      <div className="flex gap-2">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              commitDraft();
-            }
-          }}
-          placeholder="упиши превод и Enter"
-          autoComplete="off"
-          className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
-          style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
-        />
-        <button
-          type="button"
-          onClick={suggest}
-          disabled={!srWord.trim() || suggestState === 'loading'}
-          className="flex items-center gap-1.5 rounded-lg px-3 shrink-0"
-          style={{
-            fontFamily: FONT_BODY,
-            fontSize: '0.78rem',
-            color: srWord.trim() ? '#D4A54A' : '#4B5680',
-            background: '#12192E',
-            border: '1px solid #2A3355',
-          }}
-          title="Предложи преводе (машински, провери пре него што сачуваш)"
-        >
-          {suggestState === 'loading' ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
-          Предложи
-        </button>
-      </div>
-
-      {suggestState === 'notfound' && (
-        <p style={{ color: '#8892AE', fontSize: '0.72rem', marginTop: 6 }}>
-          Ништа ново није пронађено — унеси ручно.
-        </p>
-      )}
-      {suggestState === 'error' && (
-        <p style={{ color: '#8892AE', fontSize: '0.72rem', marginTop: 6 }}>
-          Претрага тренутно није доступна — унеси ручно.
-        </p>
-      )}
-      {suggestions.length > 0 && (
-        <div className="mt-2">
-          <div style={{ color: '#5C6690', fontSize: '0.7rem', marginBottom: 5, fontFamily: FONT_MONO }}>
-            ПРЕДЛОЗИ (КЛИКНИ ДА ДОДАШ)
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {suggestions.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => {
-                  addVariant(s);
-                  setSuggestions((prev) => prev.filter((x) => x !== s));
-                }}
-                className="rounded-full px-2.5 py-1"
-                style={{ background: '#2A2140', color: '#C9A8E8', fontSize: '0.82rem', border: '1px dashed #4A3A66' }}
-              >
-                + {s}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function App() {
   useGoogleFonts();
@@ -1468,51 +1092,9 @@ function TagScopeBar({ tags, tagFilter, onChange }) {
   );
 }
 
-function DirectionPill({ active, label, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className="px-3.5 py-1.5 rounded-full text-xs font-semibold transition-colors"
-      style={{
-        fontFamily: FONT_MONO,
-        letterSpacing: 0.5,
-        background: active ? '#D4A54A' : '#1B2440',
-        color: active ? '#12192E' : '#5C6690',
-        border: active ? '1px solid #D4A54A' : '1px solid #2A3355',
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
 /* ---------------- WORDS LIST ---------------- */
 
 const srCollator = new Intl.Collator('sr', { sensitivity: 'base' });
-
-function WordStats({ correct, wrong }) {
-  const c = correct || 0;
-  const w = wrong || 0;
-  const total = c + w;
-  if (total === 0) {
-    return (
-      <span style={{ fontFamily: FONT_MONO, fontSize: '0.65rem', color: '#4B5680' }}>
-        неиспробано
-      </span>
-    );
-  }
-  const errorRate = w / total;
-  const color = errorRate >= 0.5 ? '#E28B95' : errorRate > 0 ? '#D4A54A' : '#7DC79A';
-  return (
-    <span
-      className="inline-flex items-center gap-1"
-      style={{ fontFamily: FONT_MONO, fontSize: '0.68rem', color }}
-      title={`${c} тачно, ${w} нетачно`}
-    >
-      <Check size={11} /> {c} <X size={11} style={{ marginLeft: 2 }} /> {w}
-    </span>
-  );
-}
 
 // Accuracy broken down by tag, using each word's own correct_count/
 // wrong_count aggregated across every tag it carries — see
@@ -1539,23 +1121,6 @@ function TagAccuracyPanel({ words, tags }) {
         </div>
       )}
     </div>
-  );
-}
-
-function SortPill({ active, label, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className="px-2.5 py-1 rounded-full text-[0.68rem] font-semibold"
-      style={{
-        fontFamily: FONT_MONO,
-        letterSpacing: 0.5,
-        background: active ? '#2A3355' : 'transparent',
-        color: active ? '#D4A54A' : '#5C6690',
-      }}
-    >
-      {label}
-    </button>
   );
 }
 
@@ -2203,24 +1768,6 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
         );
       })}
     </div>
-  );
-}
-
-function TagFilterPill({ active, label, onClick }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="px-2.5 py-1 rounded-full text-xs"
-      style={{
-        fontFamily: FONT_MONO,
-        background: active ? '#D4A54A' : '#1B2440',
-        color: active ? '#12192E' : '#8892AE',
-        border: active ? '1px solid #D4A54A' : '1px solid #2A3355',
-      }}
-    >
-      {label}
-    </button>
   );
 }
 
