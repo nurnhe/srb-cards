@@ -22,6 +22,7 @@ import {
   buildExportData,
   parseImportData,
   stripPitchAccent,
+  mergeVariants,
   isCyrillic,
   cyrillicToLatin,
   posTagNamesFromHeadingIds,
@@ -544,10 +545,8 @@ function VariantsEditor({ variants, onChange, srWord }) {
   });
 
   const addVariant = (text) => {
-    const t = text.trim().toLowerCase();
-    if (!t) return;
-    if (variants.some((v) => v.toLowerCase() === t)) return;
-    onChange([...variants, t]);
+    const next = mergeVariants(variants, text);
+    if (next.length !== variants.length) onChange(next);
   };
 
   const removeVariant = (text) => {
@@ -1173,7 +1172,7 @@ export default function App() {
   const addWordWithRelated = useCallback(
     async (sr, ru, example, relatedSelections, mainTagNames) => {
       const mainWord = await addWord(sr, ru, example);
-      if (!mainWord) return;
+      if (!mainWord) return false;
       // Tracks words created earlier in this same call (like importWords'
       // `known`) — checking against the closed-over `words` state alone
       // would miss a related word just created a few iterations ago, since
@@ -1222,6 +1221,7 @@ export default function App() {
       created.slice(1).forEach((word) => {
         void autoTagPartOfSpeech(word);
       });
+      return true;
     },
     [addWord, linkWords, tagWord, autoTagPartOfSpeech, words]
   );
@@ -1235,7 +1235,7 @@ export default function App() {
   // then links (both need every word to already have an id).
   const importWords = useCallback(
     async (parsedWords) => {
-      const stats = { added: 0, skipped: 0, tagged: 0, linked: 0, failed: 0 };
+      const stats = { added: 0, skipped: 0, tagged: 0, linked: 0, failed: 0, failedWords: 0 };
       let known = words;
       const srToId = {};
       const resolveId = (srText) => {
@@ -1256,6 +1256,10 @@ export default function App() {
           known = [...known, created];
           srToId[normalize(w.sr)] = created.id;
           stats.added++;
+        } else {
+          // Its tags and links are skipped below (no id to attach them to) —
+          // counted, so the summary can say so instead of silently dropping it.
+          stats.failedWords++;
         }
       }
 
@@ -1300,7 +1304,7 @@ export default function App() {
         }
       }
 
-      if (stats.failed > 0) setStorageError(true);
+      if (stats.failed > 0 || stats.failedWords > 0) setStorageError(true);
       return stats;
     },
     [words, tags, addWord, tagWord, linkWords]
@@ -2106,9 +2110,12 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
         return;
       }
       const stats = await onImport(parsed.words);
-      setImportState('done');
+      setImportState(stats.failed > 0 || stats.failedWords > 0 ? 'error' : 'done');
       setImportMessage(
         `Додато: ${stats.added}. Прескочено (већ постоји): ${stats.skipped}. Тагова додато: ${stats.tagged}. Веза додато: ${stats.linked}.` +
+          (stats.failedWords > 0
+            ? ` Речи које нису сачуване: ${stats.failedWords} (њихови тагови и везе су прескочени). Покушај поново — речи које већ постоје се прескачу.`
+            : '') +
           (stats.failed > 0 ? ` Није сачувано (грешка): ${stats.failed}.` : '')
       );
     } catch (e) {
@@ -2853,6 +2860,8 @@ function AddWord({ onAdd, goToList, words, tags }) {
   const [variantsResetKey, setVariantsResetKey] = useState(0);
   const [example, setExample] = useState('');
   const [justAdded, setJustAdded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
   const [lookupState, setLookupState] = useState('idle'); // idle | loading | notfound | error
   const [relatedWords, setRelatedWords] = useState([]);
   const [relatedState, setRelatedState] = useState('idle'); // idle | loading | notfound | error
@@ -3056,16 +3065,30 @@ function AddWord({ onAdd, goToList, words, tags }) {
     setRelatedSelections((prev) => (prev[word] ? { ...prev, [word]: { ...prev[word], ru, edited: true } } : prev));
   };
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    if (!sr.trim() || ruVariants.length === 0 || duplicate) return;
+    if (saving || !sr.trim() || ruVariants.length === 0 || duplicate) return;
     const relatedToAdd = Object.entries(relatedSelections).map(([relSr, sel]) => ({
       sr: relSr,
       ru: sel.ru,
       tagNames: selectedTagNames.filter((name) => !tagExclusions[name]?.has(relSr)),
     }));
     const mainTagNames = selectedTagNames.filter((name) => !tagExclusions[name]?.has('__main__'));
-    onAdd(sr, ruVariants.join(', '), example, relatedToAdd, mainTagNames);
+    // The form is only cleared once the word is really saved — clearing it
+    // first meant a failed save (server down, network drop) also threw away
+    // everything that had been typed.
+    setSaving(true);
+    setSaveFailed(false);
+    let saved = false;
+    try {
+      saved = await onAdd(sr, ruVariants.join(', '), example, relatedToAdd, mainTagNames);
+    } finally {
+      setSaving(false);
+    }
+    if (!saved) {
+      setSaveFailed(true);
+      return;
+    }
     srLiveRef.current = '';
     autoPosRef.current = [];
     dismissedPosRef.current = new Set();
@@ -3591,7 +3614,7 @@ function AddWord({ onAdd, goToList, words, tags }) {
       <div className="flex items-center gap-3 mt-4">
         <button
           type="submit"
-          disabled={!canSubmit}
+          disabled={!canSubmit || saving}
           className="rounded-lg px-5 py-2.5 text-sm font-semibold flex items-center gap-2"
           style={{
             fontFamily: FONT_BODY,
@@ -3599,8 +3622,13 @@ function AddWord({ onAdd, goToList, words, tags }) {
             color: canSubmit ? '#F5F1E8' : '#5C6690',
           }}
         >
-          <Plus size={16} /> Додај реч
+          {saving ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} Додај реч
         </button>
+        {saveFailed && (
+          <span style={{ color: '#E28B95', fontSize: '0.85rem', fontFamily: FONT_BODY }}>
+            Није сачувано — покушај поново (унето је остало).
+          </span>
+        )}
         {justAdded && (
           <span style={{ color: '#7DC79A', fontSize: '0.85rem', fontFamily: FONT_BODY }}>
             Додато ✓

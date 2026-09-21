@@ -145,6 +145,20 @@ export function parseVariants(str) {
     .filter(Boolean);
 }
 
+// Adds what was typed (or picked from the suggestions) to a word's list of
+// accepted translations. A comma always separates translations — that is how
+// the list is stored and how answers are checked — so "да, конечно" becomes two
+// separate translations here, visibly, instead of one chip that could never
+// be matched by anything typed in practice. Lowercased, trimmed, no repeats.
+export function mergeVariants(existing, text) {
+  const result = [...existing];
+  for (const piece of parseVariants(text)) {
+    const t = piece.toLowerCase();
+    if (!result.some((v) => v.toLowerCase() === t)) result.push(t);
+  }
+  return result;
+}
+
 // Fisher–Yates shuffle
 export function shuffle(arr) {
   const a = [...arr];
