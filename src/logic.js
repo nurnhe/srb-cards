@@ -552,3 +552,43 @@ export function stripPitchAccent(text) {
   }
   return result.normalize('NFC');
 }
+
+// Wiktionary's part-of-speech headings mapped to the Serbian tag names used in
+// the app (the same lowercase Latin style as the existing "glagol" tag).
+const POS_HEADING_TO_TAG = {
+  verb: 'glagol',
+  noun: 'imenica',
+  proper_noun: 'imenica',
+  adjective: 'pridev',
+  adverb: 'prilog',
+  pronoun: 'zamenica',
+  preposition: 'predlog',
+  conjunction: 'veznik',
+  interjection: 'uzvik',
+  numeral: 'broj',
+  particle: 'čestica',
+};
+
+export const PART_OF_SPEECH_TAG_NAMES = [...new Set(Object.values(POS_HEADING_TO_TAG))];
+
+// Takes the heading ids found in a Wiktionary page's Serbo-Croatian section
+// (like "Verb", "Noun_2", "Derived_terms") and returns the tag names for the
+// parts of speech among them, each once, in order of appearance. The "_2"
+// suffix Wiktionary adds when a word has several origins is ignored.
+export function posTagNamesFromHeadingIds(ids) {
+  const names = [];
+  for (const id of ids || []) {
+    const base = String(id).replace(/_\d+$/, '').toLowerCase();
+    const tag = POS_HEADING_TO_TAG[base];
+    if (tag && !names.includes(tag)) names.push(tag);
+  }
+  return names;
+}
+
+// Words that carry none of the part-of-speech tags yet.
+export function wordsNeedingPartOfSpeech(words, tags) {
+  const posTagIds = new Set(
+    (tags || []).filter((t) => PART_OF_SPEECH_TAG_NAMES.includes(t.name.toLowerCase())).map((t) => t.id)
+  );
+  return words.filter((w) => !(w.tagIds || []).some((id) => posTagIds.has(id)));
+}

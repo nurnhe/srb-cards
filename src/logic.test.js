@@ -26,6 +26,9 @@ import {
   buildExportData,
   parseImportData,
   stripPitchAccent,
+  posTagNamesFromHeadingIds,
+  wordsNeedingPartOfSpeech,
+  PART_OF_SPEECH_TAG_NAMES,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -959,5 +962,58 @@ describe('stripPitchAccent', () => {
     expect(stripPitchAccent('')).toBe('');
     expect(stripPitchAccent(null)).toBeNull();
     expect(stripPitchAccent(undefined)).toBeUndefined();
+  });
+});
+
+describe('posTagNamesFromHeadingIds', () => {
+  it('turns part-of-speech headings into Serbian tag names', () => {
+    expect(posTagNamesFromHeadingIds(['Etymology', 'Pronunciation', 'Verb', 'Conjugation'])).toEqual(['glagol']);
+    expect(posTagNamesFromHeadingIds(['Noun', 'Declension'])).toEqual(['imenica']);
+    expect(posTagNamesFromHeadingIds(['Adjective'])).toEqual(['pridev']);
+  });
+
+  it('ignores the numeric suffix used when a word has several origins', () => {
+    expect(posTagNamesFromHeadingIds(['Etymology_2', 'Noun_2', 'Declension_2', 'Derived_terms'])).toEqual(['imenica']);
+  });
+
+  it('gives every part of speech once when a word has several', () => {
+    expect(posTagNamesFromHeadingIds(['Noun', 'Adjective', 'Noun_2'])).toEqual(['imenica', 'pridev']);
+  });
+
+  it('treats a proper noun as a noun', () => {
+    expect(posTagNamesFromHeadingIds(['Proper_noun'])).toEqual(['imenica']);
+  });
+
+  it('returns nothing for headings that are not a part of speech, or for no input', () => {
+    expect(posTagNamesFromHeadingIds(['Etymology', 'Further_reading', 'References'])).toEqual([]);
+    expect(posTagNamesFromHeadingIds([])).toEqual([]);
+    expect(posTagNamesFromHeadingIds(undefined)).toEqual([]);
+  });
+});
+
+describe('wordsNeedingPartOfSpeech', () => {
+  const tags = [
+    { id: 't1', name: 'glagol' },
+    { id: 't2', name: 'imenica' },
+    { id: 't3', name: 'hrana' },
+  ];
+  const w = (id, tagIds) => ({ id, sr: id, tagIds });
+
+  it('lists words with no part-of-speech tag, including ones that only have other tags', () => {
+    const words = [w('a', []), w('b', ['t1']), w('c', ['t3']), w('d', ['t3', 't2'])];
+    expect(wordsNeedingPartOfSpeech(words, tags).map((x) => x.id)).toEqual(['a', 'c']);
+  });
+
+  it('is case-insensitive about tag names', () => {
+    const upper = [{ id: 't1', name: 'Glagol' }];
+    expect(wordsNeedingPartOfSpeech([w('a', ['t1'])], upper)).toEqual([]);
+  });
+
+  it('lists every word when no part-of-speech tag exists yet', () => {
+    expect(wordsNeedingPartOfSpeech([w('a', []), w('b', [])], []).length).toBe(2);
+  });
+
+  it('exposes the tag names it looks for', () => {
+    expect(PART_OF_SPEECH_TAG_NAMES).toEqual(expect.arrayContaining(['glagol', 'imenica', 'pridev']));
   });
 });
