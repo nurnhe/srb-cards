@@ -5,7 +5,8 @@ this app stores her vocabulary and quizzes her on it.
 
 ## Stack
 
-- React (single-file component tree in `src/App.jsx`), built with Vite
+- React, built with Vite: `src/App.jsx` is the app shell and data handling; the
+  screens and shared pieces are in their own files (see "Key conventions")
 - Styling: inline styles + Tailwind utility classes (no custom Tailwind config)
 - Backend: Node + Express in `backend/`, talks to Supabase with
   `@supabase/supabase-js`. The browser never touches the database directly for
@@ -47,9 +48,10 @@ filtering (see "Database schema" below for the actual policies).
 - The login screens (`LoginGate`, `NewPasswordGate`) live in `src/Auth.jsx`; fonts
   and the font-loading hook are in `src/theme.js`.
 - Small shared components live in `src/components/` (`IpaText`, `PronounceButton`,
-  `InflectionTables`, `VariantsEditor`, `WordStats`, `Pills`). The Add Word and
-  Words list screens are `src/AddWord.jsx` and `src/WordsList.jsx`; the last big
-  screen (`Practice`) is still in `App.jsx` — see the Notion tickets.
+  `InflectionTables`, `VariantsEditor`, `WordStats`, `Pills`). The three big
+  screens are `src/AddWord.jsx`, `src/WordsList.jsx` and `src/Practice.jsx`.
+  `App.jsx` now holds only the app shell (`App`, `Header`, `TabBar`) and the data
+  handling for words and tags.
 - **`backend/src/auth.js`**'s `requireAuth` middleware reads the
   `Authorization: Bearer <token>` header the frontend sends, and builds a
   **fresh Supabase client per request** using the `anon` key with that token
@@ -280,7 +282,7 @@ its README, which also tracks whether it has run in the real and test
 projects), and update `supabase/schema.sql` (the from-scratch version used for
 the test database) in the same change.
 
-## Key conventions in `App.jsx`
+## Key conventions (`App.jsx` and the screen files)
 
 - **Part-of-speech tags**: the Wiktionary page's part-of-speech headings become
   ordinary tags named in Serbian (`glagol`, `imenica`, `pridev`, `prilog`,
