@@ -29,6 +29,7 @@ import {
   buildWordFamilies,
   pickFamilyRoot,
   looksLikeVerb,
+  buildFamilyTree,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -1080,5 +1081,66 @@ describe('pickFamilyRoot', () => {
   it('breaks a full tie alphabetically', () => {
     const words = [w('b', 'pisan', ['a']), w('a', 'pisac', ['b'])];
     expect(rootOf(words)).toBe('a');
+  });
+});
+
+describe('buildFamilyTree', () => {
+  const w = (id, sr, ru, relatedIds = []) => ({ id, sr, ru, relatedIds });
+  const treeOf = (words) => {
+    const byId = Object.fromEntries(words.map((x) => [x.id, x]));
+    const family = buildWordFamilies(words)[0];
+    return buildFamilyTree(family, byId, pickFamilyRoot(family, byId));
+  };
+  const names = (list) => list.map((n) => n.word.sr);
+
+  it('nests a prefixed verb under its base verb', () => {
+    const t = treeOf([
+      w('1', 'raditi', 'делать', ['2', '3']),
+      w('2', 'uraditi', 'сделать', ['1']),
+      w('3', 'doraditi', 'доделать', ['1']),
+    ]);
+    expect(t.root.sr).toBe('raditi');
+    expect(names(t.members)).toEqual(['doraditi', 'uraditi']);
+  });
+
+  it('nests a doubly prefixed verb under the closest base, not the top word', () => {
+    const t = treeOf([
+      w('1', 'raditi', 'делать', ['2']),
+      w('2', 'uraditi', 'сделать', ['1', '3']),
+      w('3', 'poduraditi', 'x-ть', ['2']),
+    ]);
+    expect(names(t.members)).toEqual(['uraditi']);
+    expect(names(t.members[0].children)).toEqual(['poduraditi']);
+  });
+
+  it('keeps words that are not a prefixed form flat under the top word', () => {
+    const t = treeOf([
+      w('1', 'izaći', 'выйти', ['2']),
+      w('2', 'izlaziti', 'выходить', ['1', '3']),
+      w('3', 'izlaz', 'выход', ['2']),
+    ]);
+    expect(t.root.sr).toBe('izaći');
+    expect(names(t.members)).toEqual(['izlaz', 'izlaziti']);
+    expect(t.members.every((m) => m.children.length === 0)).toBe(true);
+  });
+
+  it('never nests a noun under a verb, even if it ends the same way', () => {
+    const t = treeOf([
+      w('1', 'raditi', 'делать', ['2']),
+      w('2', 'neraditi', 'существительное', ['1']),
+    ]);
+    expect(names(t.members)).toEqual(['neraditi']);
+    expect(t.members[0].children).toEqual([]);
+  });
+
+  it('compares Cyrillic and Latin spellings as the same', () => {
+    const t = treeOf([
+      w('1', 'радити', 'делать', ['2']),
+      w('2', 'urađiti', 'x', ['1']),
+      w('3', 'uradити', 'сделать', ['1']),
+    ]);
+    expect(t.root.sr).toBe('радити');
+    expect(names(t.members)).toEqual(expect.arrayContaining(['uradити']));
+    expect(t.members.find((m) => m.word.sr === 'uradити')).toBeDefined();
   });
 });

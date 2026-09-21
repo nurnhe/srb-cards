@@ -638,3 +638,45 @@ export function pickFamilyRoot(family, wordsById) {
   });
   return sorted[0];
 }
+
+const familyCollator = new Intl.Collator('sr', { sensitivity: 'base' });
+
+// Lays a family out under its top word (`rootId`, from pickFamilyRoot). A verb
+// is nested under another verb only when it is that verb with something added
+// in front (uraditi and doraditi under raditi) — never just because two words
+// were linked, so izlaziti is not tucked under izaći. Everything else sits
+// directly under the top word. Both scripts are compared in Latin.
+// Returns { root, members: [{ word, children: [...] }] }, each list sorted.
+export function buildFamilyTree(family, wordsById, rootId) {
+  const latin = (w) => cyrillicToLatin(String(w.sr || '').trim().toLowerCase());
+  const nodes = {};
+  family.ids.forEach((id) => (nodes[id] = { word: wordsById[id], children: [] }));
+
+  for (const id of family.ids) {
+    if (id === rootId) continue;
+    const word = wordsById[id];
+    let parentId = rootId;
+    if (looksLikeVerb(word)) {
+      let best = null;
+      for (const otherId of family.ids) {
+        if (otherId === id) continue;
+        const other = wordsById[otherId];
+        if (!looksLikeVerb(other)) continue;
+        const a = latin(word);
+        const b = latin(other);
+        if (a.length > b.length && a.endsWith(b) && (!best || b.length > latin(wordsById[best]).length)) {
+          best = otherId;
+        }
+      }
+      if (best) parentId = best;
+    }
+    nodes[parentId].children.push(nodes[id]);
+  }
+
+  const sortNodes = (list) => {
+    list.sort((x, y) => familyCollator.compare(x.word.sr, y.word.sr));
+    list.forEach((n) => sortNodes(n.children));
+  };
+  sortNodes(nodes[rootId].children);
+  return { root: nodes[rootId].word, members: nodes[rootId].children };
+}

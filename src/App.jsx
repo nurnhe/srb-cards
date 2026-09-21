@@ -24,6 +24,7 @@ import {
   stripPitchAccent,
   buildWordFamilies,
   pickFamilyRoot,
+  buildFamilyTree,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -1368,6 +1369,25 @@ function TabBar({ tab, setTab, count }) {
 
 /* ---------------- FAMILIES ---------------- */
 
+// A list of related words; a word built from another (uraditi from raditi)
+// sits indented under it.
+function FamilyMembers({ members }) {
+  if (members.length === 0) return null;
+  return (
+    <div className="mt-2 ml-1 pl-3 space-y-1" style={{ borderLeft: '2px solid #D4A54A' }}>
+      {members.map((m) => (
+        <div key={m.word.id}>
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>{m.word.sr}</span>
+            <span style={{ fontFamily: FONT_BODY, color: '#8892AE', fontSize: '0.8rem' }}>{m.word.ru}</span>
+          </div>
+          <FamilyMembers members={m.children} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Every group of words linked to each other, biggest first. Each family is a
 // card: the most basic word on top, the words built from it listed below.
 function FamiliesView({ words, goToList }) {
@@ -1397,12 +1417,7 @@ function FamiliesView({ words, goToList }) {
         СРОДНЕ РЕЧИ · {families.length}
       </div>
       {families.map((family) => {
-        const rootId = pickFamilyRoot(family, wordsById);
-        const members = family.ids
-          .filter((id) => id !== rootId)
-          .map((id) => wordsById[id])
-          .sort((a, b) => srCollator.compare(a.sr, b.sr));
-        const root = wordsById[rootId];
+        const { root, members } = buildFamilyTree(family, wordsById, pickFamilyRoot(family, wordsById));
         return (
           <div
             key={family.ids.slice().sort().join('|')}
@@ -1413,14 +1428,7 @@ function FamiliesView({ words, goToList }) {
               <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1.15rem' }}>{root.sr}</span>
               <span style={{ fontFamily: FONT_BODY, color: '#8892AE', fontSize: '0.85rem' }}>{root.ru}</span>
             </div>
-            <div className="mt-2 ml-1 pl-3 space-y-1" style={{ borderLeft: '2px solid #D4A54A' }}>
-              {members.map((m) => (
-                <div key={m.id} className="flex items-baseline gap-2 flex-wrap">
-                  <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>{m.sr}</span>
-                  <span style={{ fontFamily: FONT_BODY, color: '#8892AE', fontSize: '0.8rem' }}>{m.ru}</span>
-                </div>
-              ))}
-            </div>
+            <FamilyMembers members={members} />
           </div>
         );
       })}
