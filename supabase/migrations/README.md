@@ -17,7 +17,7 @@ function) predates this record; it is described in `../schema.sql`.
 | 002_assign_owner_and_secure.sql | assign owner, per-person tags, security rules | run | built from schema.sql |
 | 003_drop_open_policies.sql | remove the old open policies | run | not needed (never had them) |
 | 004_require_owner.sql | owner column mandatory | reported done — verify (query below) | built from schema.sql |
-| 005_indexes.sql | three indexes | **not run yet** | **not run yet** |
+| 005_indexes.sql | three indexes | run | run |
 
 Update the two right-hand columns when a file is run.
 
