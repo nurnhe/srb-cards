@@ -3,12 +3,10 @@
 #   development: docker build --target dev -t srb-cards-dev .   (run_dev.sh does this)
 #   release:     docker build -t srb-cards .
 #
-# The backend's settings and the port are read at container START:
+# Nothing is configured at build time. The backend's settings (including the
+# public Supabase URL and anon key, which the site fetches from /api/config)
+# and the port are read at container START:
 #   docker run --env-file .env -p 127.0.0.1:3000:3000 srb-cards
-# The one exception is the two public VITE_SUPABASE_* values (the URL and the
-# anon key, both safe to be public): the browser needs them for sign-in, and
-# Vite bakes them into the site at BUILD time, so pass them as build args:
-#   docker build --build-arg VITE_SUPABASE_URL=... --build-arg VITE_SUPABASE_ANON_KEY=... -t srb-cards .
 
 FROM node:22-alpine AS deps
 
@@ -42,8 +40,6 @@ FROM deps AS build
 
 COPY index.html vite.config.js ./
 COPY src ./src
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_ANON_KEY
 RUN npm run build
 
 

@@ -11,6 +11,16 @@ const app = express();
 app.use(express.json({ limit: '5mb' }));
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
+
+// The browser needs the Supabase URL and public (anon) key to sign in. Handing
+// them out at run time, instead of baking them into the site at build time,
+// means the build needs no settings at all. Both values are public by design.
+app.get('/api/config', (req, res) => {
+  res.json({
+    supabaseUrl: process.env.SUPABASE_URL,
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
+  });
+});
 app.use('/api/vocabulary', requireAuth, vocabulary);
 app.use('/api/words', requireAuth, words);
 app.use('/api/links', requireAuth, links);
@@ -42,9 +52,9 @@ app.use((err, req, res, next) => {
 const port = Number(process.env.PORT) || 3000;
 
 // Binds to all interfaces so Docker can publish the port. run_dev.sh publishes
-// it on 127.0.0.1 only for local dev regardless — this backend holds the
-// service_role key, and even with per-user auth in place, binding to
-// localhost is one less thing to think about while developing.
+// it on 127.0.0.1 only for local dev regardless — even with per-user auth in
+// place, binding to localhost is one less thing to think about while
+// developing.
 app.listen(port, '0.0.0.0', () => {
   console.log(`API listening on http://localhost:${port}`);
 });
