@@ -44,6 +44,8 @@ filtering (see "Database schema" below for the actual policies).
   the address shows the same screen with a welcome line so they choose one. The
   invite email's wording can be edited under Authentication → Email Templates.
   The built-in sender only allows a few emails per hour.
+- The login screens (`LoginGate`, `NewPasswordGate`) live in `src/Auth.jsx`; fonts
+  and the font-loading hook are in `src/theme.js`.
 - **`backend/src/auth.js`**'s `requireAuth` middleware reads the
   `Authorization: Bearer <token>` header the frontend sends, and builds a
   **fresh Supabase client per request** using the `anon` key with that token
