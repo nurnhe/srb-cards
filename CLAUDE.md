@@ -38,8 +38,12 @@ filtering (see "Database schema" below for the actual policies).
   `redirectTo` = the site's own address, which must be listed under Supabase →
   Authentication → URL Configuration → Redirect URLs), and following it lands
   on `NewPasswordGate` in `App.jsx` (flagged by the `PASSWORD_RECOVERY` event
-  or `type=recovery` in the address) to pick a new password. The built-in
-  sender only allows a few emails per hour.
+  or `type=recovery` in the address) to pick a new password. Accounts can also
+  be created with the dashboard's **Invite user** (Authentication → Users): the
+  emailed link signs the person in with no password set, and `type=invite` in
+  the address shows the same screen with a welcome line so they choose one. The
+  invite email's wording can be edited under Authentication → Email Templates.
+  The built-in sender only allows a few emails per hour.
 - **`backend/src/auth.js`**'s `requireAuth` middleware reads the
   `Authorization: Bearer <token>` header the frontend sends, and builds a
   **fresh Supabase client per request** using the `anon` key with that token
