@@ -1268,7 +1268,7 @@ export default function App() {
           <>
             {tab === 'practice' && <Practice words={words} tags={tags} onAnswer={recordAnswer} />}
             {tab === 'words' && (
-              <WordsList
+              <WordsTab
                 words={words}
                 tags={tags}
                 onDelete={deleteWord}
@@ -1280,7 +1280,6 @@ export default function App() {
                 onImport={importWords}
               />
             )}
-            {tab === 'families' && <FamiliesView words={words} goToList={() => setTab('words')} />}
             {tab === 'add' && (
               <AddWord onAdd={addWordWithRelated} goToList={() => setTab('words')} words={words} tags={tags} />
             )}
@@ -1342,7 +1341,6 @@ function TabBar({ tab, setTab, count }) {
   const tabs = [
     { id: 'practice', label: 'Вежбање' },
     { id: 'words', label: `Речи${count ? ` · ${count}` : ''}` },
-    { id: 'families', label: 'Породице' },
     { id: 'add', label: 'Додај' },
   ];
   return (
@@ -1456,14 +1454,14 @@ function FamiliesView({ words, goToList }) {
     return (
       <div className="text-center py-16" style={{ color: '#8892AE' }}>
         <p className="mb-4">Још нема повезаних речи.</p>
-        <p className="text-sm mb-5">Повежи речи истог корена (нпр. глагол и именицу) у картици „Речи“ — овде ће се појавити као породица.</p>
+        <p className="text-sm mb-5">Повежи речи истог корена (нпр. глагол и именицу) у списку — овде ће се појавити као породица.</p>
         <button
           type="button"
           onClick={goToList}
           className="rounded-lg px-4 py-2 text-sm font-medium"
           style={{ background: '#1B2440', color: '#F5F1E8', border: '1px solid #2A3355' }}
         >
-          Иди на речи
+          Иди на списак
         </button>
       </div>
     );
@@ -1999,6 +1997,27 @@ function DirectionPill({ active, label, onClick }) {
     >
       {label}
     </button>
+  );
+}
+
+/* ---------------- WORDS TAB ---------------- */
+
+// The Words tab, with a small switch between the plain list and the picture of
+// word families — kept here rather than as a fourth main tab.
+function WordsTab(props) {
+  const [view, setView] = useState('list'); // list | families
+  return (
+    <>
+      <div className="flex justify-center gap-2 mb-4">
+        <DirectionPill active={view === 'list'} label="СПИСАК" onClick={() => setView('list')} />
+        <DirectionPill active={view === 'families'} label="ПОРОДИЦЕ" onClick={() => setView('families')} />
+      </div>
+      {view === 'list' ? (
+        <WordsList {...props} />
+      ) : (
+        <FamiliesView words={props.words} goToList={() => setView('list')} />
+      )}
+    </>
   );
 }
 
