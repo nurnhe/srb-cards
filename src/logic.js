@@ -552,3 +552,128 @@ export function stripPitchAccent(text) {
   }
   return result.normalize('NFC');
 }
+
+// Groups words into "families": sets of words connected to each other through
+// word_links, directly or via other words (raditi ↔ doraditi ↔ uraditi is one
+// family of three). Words with no links are left out. Returns the biggest
+// family first: [{ ids: [wordId...], edges: [[idA, idB]...] }]. Each link is
+// listed once, and a link that only one side records still counts.
+export function buildWordFamilies(words) {
+  const byId = new Map(words.map((w) => [w.id, w]));
+  const neighbours = new Map();
+  const link = (a, b) => {
+    if (!byId.has(a) || !byId.has(b) || a === b) return;
+    if (!neighbours.has(a)) neighbours.set(a, new Set());
+    if (!neighbours.has(b)) neighbours.set(b, new Set());
+    neighbours.get(a).add(b);
+    neighbours.get(b).add(a);
+  };
+  words.forEach((w) => (w.relatedIds || []).forEach((rid) => link(w.id, rid)));
+
+  const seen = new Set();
+  const families = [];
+  for (const w of words) {
+    if (seen.has(w.id) || !neighbours.has(w.id)) continue;
+    const ids = [];
+    const stack = [w.id];
+    seen.add(w.id);
+    while (stack.length) {
+      const id = stack.pop();
+      ids.push(id);
+      for (const next of neighbours.get(id)) {
+        if (!seen.has(next)) {
+          seen.add(next);
+          stack.push(next);
+        }
+      }
+    }
+    const edges = [];
+    for (const id of ids) {
+      for (const other of neighbours.get(id)) {
+        if (id < other) edges.push([id, other]);
+      }
+    }
+    families.push({ ids, edges });
+  }
+
+  return families.sort((a, b) => {
+    if (b.ids.length !== a.ids.length) return b.ids.length - a.ids.length;
+    const nameA = byId.get(a.ids[0]).sr;
+    const nameB = byId.get(b.ids[0]).sr;
+    return nameA.localeCompare(nameB);
+  });
+}
+
+// Places a family's words on a flat picture: linked words are pulled toward
+// each other and all words push apart, then the result is scaled (keeping its
+// proportions) to fit inside width x height with `pad` (or `padX` / `padY`) to spare. Fully deterministic (no randomness), so
+// the same family always draws the same way. Returns { [wordId]: { x, y } }.
+export function layoutFamily(ids, edges, { width = 560, height = 300, pad = 60, padX = pad, padY = pad } = {}) {
+  const n = ids.length;
+  const pos = {};
+  if (n === 1) return { [ids[0]]: { x: width / 2, y: height / 2 } };
+
+  const pts = ids.map((id, i) => {
+    const angle = (2 * Math.PI * i) / n;
+    return { id, x: Math.cos(angle), y: Math.sin(angle), dx: 0, dy: 0 };
+  });
+  const index = new Map(pts.map((p, i) => [p.id, i]));
+
+  for (let step = 0; step < 300; step++) {
+    const cooling = 1 - step / 300;
+    for (const p of pts) {
+      p.dx = 0;
+      p.dy = 0;
+    }
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let vx = pts[i].x - pts[j].x;
+        let vy = pts[i].y - pts[j].y;
+        const dist2 = Math.max(vx * vx + vy * vy, 0.01);
+        const push = 2 / dist2;
+        vx *= push;
+        vy *= push;
+        pts[i].dx += vx;
+        pts[i].dy += vy;
+        pts[j].dx -= vx;
+        pts[j].dy -= vy;
+      }
+    }
+    for (const [a, b] of edges) {
+      const pa = pts[index.get(a)];
+      const pb = pts[index.get(b)];
+      const vx = (pb.x - pa.x) * 0.15;
+      const vy = (pb.y - pa.y) * 0.15;
+      pa.dx += vx;
+      pa.dy += vy;
+      pb.dx -= vx;
+      pb.dy -= vy;
+    }
+    for (const p of pts) {
+      p.x += p.dx * 0.5 * cooling;
+      p.y += p.dy * 0.5 * cooling;
+    }
+  }
+
+  const xs = pts.map((p) => p.x);
+  const ys = pts.map((p) => p.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  // One scale for both directions, so a chain stays a chain instead of being
+  // stretched into a zigzag, then centred inside the picture.
+  const spanX = maxX - minX;
+  const spanY = maxY - minY;
+  const innerW = width - 2 * padX;
+  const innerH = height - 2 * padY;
+  const scale = Math.min(spanX > 1e-9 ? innerW / spanX : Infinity, spanY > 1e-9 ? innerH / spanY : Infinity);
+  const k = Number.isFinite(scale) ? scale : 0;
+  for (const p of pts) {
+    pos[p.id] = {
+      x: width / 2 + (p.x - (minX + maxX) / 2) * k,
+      y: height / 2 + (p.y - (minY + maxY) / 2) * k,
+    };
+  }
+  return pos;
+}

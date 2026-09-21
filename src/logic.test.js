@@ -26,6 +26,8 @@ import {
   buildExportData,
   parseImportData,
   stripPitchAccent,
+  buildWordFamilies,
+  layoutFamily,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -959,5 +961,99 @@ describe('stripPitchAccent', () => {
     expect(stripPitchAccent('')).toBe('');
     expect(stripPitchAccent(null)).toBeNull();
     expect(stripPitchAccent(undefined)).toBeUndefined();
+  });
+});
+
+describe('buildWordFamilies', () => {
+  const w = (id, sr, relatedIds = []) => ({ id, sr, ru: 'x', relatedIds });
+
+  it('returns nothing when no word is linked', () => {
+    expect(buildWordFamilies([w('a', 'a'), w('b', 'b')])).toEqual([]);
+    expect(buildWordFamilies([])).toEqual([]);
+  });
+
+  it('groups a chain of links into one family and lists each link once', () => {
+    const words = [w('a', 'raditi', ['b']), w('b', 'doraditi', ['a', 'c']), w('c', 'uraditi', ['b'])];
+    const [family, ...rest] = buildWordFamilies(words);
+    expect(rest).toEqual([]);
+    expect([...family.ids].sort()).toEqual(['a', 'b', 'c']);
+    expect(family.edges).toHaveLength(2);
+    expect(family.edges).toEqual(expect.arrayContaining([['a', 'b'], ['b', 'c']]));
+  });
+
+  it('counts a link that only one side records', () => {
+    const [family] = buildWordFamilies([w('a', 'a', ['b']), w('b', 'b', [])]);
+    expect([...family.ids].sort()).toEqual(['a', 'b']);
+    expect(family.edges).toEqual([['a', 'b']]);
+  });
+
+  it('keeps separate families apart, biggest first, and skips unlinked words', () => {
+    const words = [
+      w('a', 'a', ['b']),
+      w('b', 'b', ['a']),
+      w('c', 'c', ['d']),
+      w('d', 'd', ['c', 'e']),
+      w('e', 'e', ['d']),
+      w('z', 'z'),
+    ];
+    const families = buildWordFamilies(words);
+    expect(families.map((f) => f.ids.length)).toEqual([3, 2]);
+    expect(families.flatMap((f) => f.ids)).not.toContain('z');
+  });
+
+  it('ignores links to words that no longer exist and links to itself', () => {
+    const words = [w('a', 'a', ['ghost', 'a']), w('b', 'b', ['a'])];
+    const [family] = buildWordFamilies(words);
+    expect([...family.ids].sort()).toEqual(['a', 'b']);
+    expect(family.edges).toEqual([['a', 'b']]);
+  });
+
+  it('orders same-sized families by their first word', () => {
+    const words = [w('c', 'zeleno', ['d']), w('d', 'zelen', ['c']), w('a', 'bel', ['b']), w('b', 'belo', ['a'])];
+    const names = buildWordFamilies(words).map((f) => f.ids[0]);
+    expect(names).toEqual(['a', 'c']);
+  });
+});
+
+describe('layoutFamily', () => {
+  const opts = { width: 560, height: 300, pad: 60 };
+
+  it('puts a single word in the middle', () => {
+    expect(layoutFamily(['a'], [], opts)).toEqual({ a: { x: 280, y: 150 } });
+  });
+
+  it('gives every word its own spot inside the picture', () => {
+    const ids = ['a', 'b', 'c', 'd', 'e'];
+    const edges = [['a', 'b'], ['b', 'c'], ['c', 'd'], ['d', 'e']];
+    const pos = layoutFamily(ids, edges, opts);
+    const seen = new Set();
+    for (const id of ids) {
+      const { x, y } = pos[id];
+      expect(Number.isFinite(x) && Number.isFinite(y)).toBe(true);
+      expect(x).toBeGreaterThanOrEqual(opts.pad - 0.001);
+      expect(x).toBeLessThanOrEqual(opts.width - opts.pad + 0.001);
+      expect(y).toBeGreaterThanOrEqual(opts.pad - 0.001);
+      expect(y).toBeLessThanOrEqual(opts.height - opts.pad + 0.001);
+      seen.add(`${x.toFixed(1)},${y.toFixed(1)}`);
+    }
+    expect(seen.size).toBe(ids.length);
+  });
+
+  it('draws two linked words apart from each other', () => {
+    const pos = layoutFamily(['a', 'b'], [['a', 'b']], opts);
+    expect(Math.hypot(pos.a.x - pos.b.x, pos.a.y - pos.b.y)).toBeGreaterThan(50);
+  });
+
+  it('is repeatable: the same family always draws the same way', () => {
+    const ids = ['a', 'b', 'c', 'd'];
+    const edges = [['a', 'b'], ['a', 'c'], ['a', 'd']];
+    expect(layoutFamily(ids, edges, opts)).toEqual(layoutFamily(ids, edges, opts));
+  });
+
+  it('handles a bigger family without breaking', () => {
+    const ids = Array.from({ length: 30 }, (_, i) => `w${i}`);
+    const edges = ids.slice(1).map((id, i) => [ids[i], id]);
+    const pos = layoutFamily(ids, edges, opts);
+    expect(Object.values(pos).every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true);
   });
 });
