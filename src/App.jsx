@@ -22,6 +22,10 @@ import {
   buildExportData,
   parseImportData,
   stripPitchAccent,
+  isCyrillic,
+  cyrillicToLatin,
+  posTagNamesFromHeadingIds,
+  wordsNeedingPartOfSpeech,
 } from './logic';
 
 const FONT_DISPLAY = "'PT Serif', Georgia, serif";
@@ -131,6 +135,32 @@ async function fetchRelatedWordsFromWiktionary(srWord) {
     });
   });
   return terms.length > 0 ? terms : null;
+}
+
+// Best-effort lookup of a word's part(s) of speech from English Wiktionary:
+// the headings (Verb, Noun, Adjective...) inside the Serbo-Croatian section,
+// returned as Serbian tag names — see posTagNamesFromHeadingIds. Returns []
+// when the word has no page or no recognisable heading (expected fairly often,
+// not a bug) and throws on a real failure (429, 5xx, network) so callers can
+// tell "not there" from "try again later". Cyrillic spellings are looked up in
+// Latin, and a reflexive "…ti se" falls back to the plain verb's page.
+async function fetchPartsOfSpeechFromWiktionary(srWord) {
+  const clean = stripPitchAccent(String(srWord).trim());
+  const latin = isCyrillic(clean) ? cyrillicToLatin(clean) : clean;
+  const titles = [latin];
+  if (/\s+se$/i.test(latin)) titles.push(latin.replace(/\s+se$/i, ''));
+
+  for (const title of titles) {
+    const res = await fetch(`https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(title)}`);
+    if (res.status === 404) continue;
+    if (!res.ok) throw new Error(`Wiktionary request failed (${res.status})`);
+    const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+    const section = doc.getElementById('Serbo-Croatian')?.closest('section');
+    if (!section) continue;
+    const names = posTagNamesFromHeadingIds(Array.from(section.querySelectorAll('h3, h4, h5')).map((h) => h.id));
+    if (names.length > 0) return names;
+  }
+  return [];
 }
 
 // Best-effort IPA pronunciation lookup, reusing the same Wiktionary REST
@@ -1079,6 +1109,53 @@ export default function App() {
     return true;
   }, []);
 
+  // Looks up a word's part of speech and tags it (glagol, imenica...). Runs in
+  // the background after a word is saved and never gets in the way: a word
+  // Wiktionary doesn't know, or a failed lookup, just leaves it untagged — the
+  // "Одреди врсте речи" button in the Words tab can retry later.
+  const autoTagPartOfSpeech = useCallback(
+    async (word) => {
+      try {
+        const names = await fetchPartsOfSpeechFromWiktionary(word.sr);
+        for (const name of names) await tagWord(word.id, name);
+      } catch (err) {
+        console.warn('Part-of-speech lookup failed:', err);
+      }
+    },
+    [tagWord]
+  );
+
+  // The one-off pass for words already saved: goes through every word that
+  // has no part-of-speech tag yet, one at a time so Wiktionary isn't hammered.
+  // Safe to run again — words already tagged are skipped, so an interrupted
+  // run just carries on where it stopped.
+  const detectPartsOfSpeech = useCallback(
+    async (onProgress) => {
+      const todo = wordsNeedingPartOfSpeech(words, tags);
+      const result = { total: todo.length, tagged: 0, notFound: [], stoppedEarly: false };
+      for (let i = 0; i < todo.length; i++) {
+        onProgress(i, todo.length);
+        try {
+          const names = await fetchPartsOfSpeechFromWiktionary(todo[i].sr);
+          if (names.length === 0) {
+            result.notFound.push(todo[i].sr);
+          } else {
+            let allSaved = true;
+            for (const name of names) if (!(await tagWord(todo[i].id, name))) allSaved = false;
+            if (allSaved) result.tagged += 1;
+          }
+        } catch (err) {
+          result.stoppedEarly = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      onProgress(todo.length, todo.length);
+      return result;
+    },
+    [words, tags, tagWord]
+  );
+
   // Adds the main word, then any selected related words (e.g. picked from
   // the Wiktionary related-words list) — reusing an existing dictionary
   // entry instead of creating a duplicate where one already matches. A
@@ -1104,13 +1181,17 @@ export default function App() {
       // it if the same word appears twice in relatedSelections.
       let known = [...words, mainWord];
       const group = [mainWord];
+      const created = [mainWord];
       const relatedWithTags = [];
       for (const rel of relatedSelections || []) {
         const existing = findDuplicateWord(rel.sr, known);
         if (!existing && (!rel.ru || !rel.ru.trim())) continue;
         const relatedWord = existing || (await addWord(rel.sr, rel.ru, null));
         if (relatedWord) {
-          if (!existing) known = [...known, relatedWord];
+          if (!existing) {
+            known = [...known, relatedWord];
+            created.push(relatedWord);
+          }
           group.push(relatedWord);
           relatedWithTags.push({ word: relatedWord, tagNames: rel.tagNames || [] });
         }
@@ -1135,8 +1216,11 @@ export default function App() {
         }
       }
       if (anyFailed) setStorageError(true);
+      created.forEach((word) => {
+        void autoTagPartOfSpeech(word);
+      });
     },
-    [addWord, linkWords, tagWord, words]
+    [addWord, linkWords, tagWord, autoTagPartOfSpeech, words]
   );
 
   // Imports a parsed JSON backup (see parseImportData). Deliberately
@@ -1276,6 +1360,7 @@ export default function App() {
                 onTag={tagWord}
                 onUntag={untagWord}
                 onImport={importWords}
+                onDetectPartsOfSpeech={detectPartsOfSpeech}
               />
             )}
             {tab === 'add' && (
@@ -1950,7 +2035,7 @@ function SortPill({ active, label, onClick }) {
   );
 }
 
-function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, onUntag, onImport }) {
+function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, onUntag, onImport, onDetectPartsOfSpeech }) {
   const [editingId, setEditingId] = useState(null);
   const [editSr, setEditSr] = useState('');
   const [editRuVariants, setEditRuVariants] = useState([]);
@@ -1969,7 +2054,31 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
   const [importState, setImportState] = useState('idle'); // idle | loading | error | done
   const [importMessage, setImportMessage] = useState('');
   const [showTagAccuracy, setShowTagAccuracy] = useState(false);
+  const [posState, setPosState] = useState('idle'); // idle | running | done | error
+  const [posProgress, setPosProgress] = useState({ done: 0, total: 0 });
+  const [posMessage, setPosMessage] = useState('');
   const importFileRef = useRef(null);
+
+  const runPartOfSpeechDetection = async () => {
+    if (posState === 'running') return;
+    setPosState('running');
+    setPosMessage('');
+    setPosProgress({ done: 0, total: 0 });
+    const result = await onDetectPartsOfSpeech((done, total) => setPosProgress({ done, total }));
+    if (result.total === 0) {
+      setPosState('done');
+      setPosMessage('Све речи већ имају врсту.');
+      return;
+    }
+    const parts = [`Означено: ${result.tagged} од ${result.total}.`];
+    if (result.notFound.length > 0) {
+      const shown = result.notFound.slice(0, 8).join(', ');
+      parts.push(`Нема на Wiktionary-ју: ${result.notFound.length} (${shown}${result.notFound.length > 8 ? '…' : ''}).`);
+    }
+    if (result.stoppedEarly) parts.push('Прекинуто — Wiktionary није одговорио. Покушај поново касније, наставиће одакле је стало.');
+    setPosState(result.stoppedEarly ? 'error' : 'done');
+    setPosMessage(parts.join(' '));
+  };
 
   const exportBackup = () => {
     const data = buildExportData(words, tags);
@@ -2187,6 +2296,19 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
         >
           {importState === 'loading' ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />} Увези
         </button>
+        {onDetectPartsOfSpeech && (
+          <button
+            type="button"
+            onClick={runPartOfSpeechDetection}
+            disabled={posState === 'running'}
+            className="flex items-center gap-1.5"
+            style={{ fontFamily: FONT_MONO, fontSize: '0.72rem', color: '#8892AE' }}
+            title="Потражи врсту речи (глагол, именица…) на Wiktionary-ју и додај таг свим речима које га немају"
+          >
+            {posState === 'running' ? <Loader2 size={13} className="animate-spin" /> : <Tag size={13} />}
+            {posState === 'running' ? `${posProgress.done} / ${posProgress.total}` : 'Одреди врсте речи'}
+          </button>
+        )}
         <input
           ref={importFileRef}
           type="file"
@@ -2219,6 +2341,18 @@ function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, o
           }}
         >
           {importMessage}
+        </p>
+      )}
+      {posMessage && (
+        <p
+          style={{
+            color: posState === 'error' ? '#E28B95' : '#8892AE',
+            fontSize: '0.78rem',
+            paddingLeft: 4,
+            marginBottom: 4,
+          }}
+        >
+          {posMessage}
         </p>
       )}
       {showTagAccuracy && <TagAccuracyPanel words={words} tags={tags} />}
