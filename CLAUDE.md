@@ -95,8 +95,20 @@ it does not exist or starts it if it does. Other flags:
 `.env` is gitignored. Write values **without quotes** — Docker reads the file
 itself and treats quotes as part of the value.
 
-**Local dev hits the real production Supabase database** — there is no separate
-dev/test project. Test data really gets saved; clean it up manually if needed.
+**By default, local dev hits the real production Supabase database** — test
+data really gets saved there. For anything risky (isolation tests, imports,
+schema experiments) use the separate test project instead:
+
+```
+./run_dev.sh --test    # uses .env.test (a second Supabase project) — prints a TEST banner
+./run_dev.sh           # back to the real one (.env); the two never run together
+```
+
+`.env.test` has the same five settings as `.env`, pointing at the test project
+(both files are gitignored). `supabase/schema.sql` builds the whole schema in a
+fresh project — **keep it in step with any schema change to production**, and
+run each schema change in both projects. Test accounts are created by hand in
+the test project's dashboard, like real ones.
 
 Running without Docker also works (`npm install && npm run dev` plus
 `cd backend && npm install && npm start`), but the backend **requires Node 22+** —
@@ -241,7 +253,9 @@ docker run --rm --name srb-cards-prod \
 
 Schema changes ship as raw SQL Kira runs herself in Supabase's SQL Editor —
 there's no migration tool/history. When adding a column or table, give her
-the exact SQL, prefer `if not exists` so it's safe to re-run.
+the exact SQL, prefer `if not exists` so it's safe to re-run, and update
+`supabase/schema.sql` (the from-scratch version used for the test database)
+in the same change.
 
 ## Key conventions in `App.jsx`
 

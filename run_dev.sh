@@ -8,7 +8,9 @@
 #   ./run_dev.sh --rebuild    rebuild the image — needed after changing a
 #                             package.json or adding a dependency
 #   ./run_dev.sh --recreate   throw the container away and make a fresh one
-#   ./run_dev.sh --stop       stop it
+#   ./run_dev.sh --stop       stop it (both the normal and the test one)
+#   ./run_dev.sh --test       use the separate TEST database (settings in
+#                             .env.test) instead of the real one (.env)
 #
 set -euo pipefail
 
@@ -16,22 +18,32 @@ cd "$(dirname "$0")"
 
 IMAGE="srb-cards-dev"
 CONTAINER="srb-cards-dev"
+OTHER_CONTAINER="srb-cards-dev-test"
+ENV_FILE=".env"
 APP_PORT=5173
 API_PORT=3000
 
 REBUILD=false
 RECREATE=false
 STOP=false
+TEST=false
 
 for arg in "$@"; do
   case "$arg" in
     --rebuild)  REBUILD=true; RECREATE=true ;;
     --recreate) RECREATE=true ;;
     --stop)     STOP=true ;;
-    -h|--help)  sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --test)     TEST=true ;;
+    -h|--help)  sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown argument: $arg (see ./run_dev.sh --help)" >&2; exit 1 ;;
   esac
 done
+
+if [ "$TEST" = true ]; then
+  CONTAINER="srb-cards-dev-test"
+  OTHER_CONTAINER="srb-cards-dev"
+  ENV_FILE=".env.test"
+fi
 
 if ! docker info >/dev/null 2>&1; then
   echo "Docker is not running. Start Docker and try again." >&2
@@ -39,20 +51,25 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 if [ "$STOP" = true ]; then
-  docker stop "$CONTAINER" >/dev/null 2>&1 \
-    && echo "Container stopped." \
-    || echo "Container was not running."
+  stopped=false
+  for name in srb-cards-dev srb-cards-dev-test; do
+    docker stop "$name" >/dev/null 2>&1 && { echo "Stopped $name."; stopped=true; } || true
+  done
+  [ "$stopped" = true ] || echo "Nothing was running."
   exit 0
 fi
+
+# Both containers use the same ports, so only one can run at a time.
+docker stop "$OTHER_CONTAINER" >/dev/null 2>&1 || true
 
 # The backend reads the Supabase credentials from these variables; without them
 # it exits straight away.
 ENV_ARGS=()
-if [ -f .env ]; then
-  ENV_ARGS=(--env-file .env)
+if [ -f "$ENV_FILE" ]; then
+  ENV_ARGS=(--env-file "$ENV_FILE")
 else
-  echo "WARNING: no .env file — the backend will not start."
-  echo "Copy .env.example to .env and fill in the values from Supabase."
+  echo "WARNING: no $ENV_FILE file — the backend will not start."
+  echo "Copy .env.example to $ENV_FILE and fill in the values from Supabase."
   echo
 fi
 
@@ -74,12 +91,12 @@ fi
 case "$(container_state)" in
   running)
     echo "Container is already running."
-    echo "(If you changed .env — restart with ./run_dev.sh --recreate.)"
+    echo "(If you changed $ENV_FILE — restart with ./run_dev.sh --recreate.)"
     ;;
   exited|created)
     echo "Starting the existing container…"
-    echo "(.env values are read when the container is created — if you changed"
-    echo " .env, restart with ./run_dev.sh --recreate.)"
+    echo "($ENV_FILE values are read when the container is created — if you changed"
+    echo " it, restart with ./run_dev.sh --recreate.)"
     docker start "$CONTAINER" >/dev/null
     ;;
   *)
@@ -101,6 +118,11 @@ case "$(container_state)" in
 esac
 
 echo
+if [ "$TEST" = true ]; then
+  echo "  *** TEST DATABASE (.env.test) — your real words are not touched ***"
+else
+  echo "  Real database (.env)"
+fi
 echo "  App:  http://localhost:$APP_PORT"
 echo "  API:  http://localhost:$API_PORT/api/health"
 echo
