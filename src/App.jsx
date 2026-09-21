@@ -1216,7 +1216,10 @@ export default function App() {
         }
       }
       if (anyFailed) setStorageError(true);
-      created.forEach((word) => {
+      // The main word's part of speech was already suggested on the form
+      // while typing (and could be changed there); related words created
+      // alongside it have no such field, so they are tagged here.
+      created.slice(1).forEach((word) => {
         void autoTagPartOfSpeech(word);
       });
     },
@@ -2867,6 +2870,16 @@ function AddWord({ onAdd, goToList, words, tags }) {
   // tags can apply to different subsets. { [tagName]: Set<key> }
   const [tagExclusions, setTagExclusions] = useState({});
   const srRef = useRef(null);
+  // Part-of-speech tags (glagol, imenica...) suggested from Wiktionary while
+  // the word is being typed. `autoPosRef` mirrors the state for use inside the
+  // async lookup; `dismissedPosRef` remembers tags the user clicked away so a
+  // later lookup for the same word doesn't put them back.
+  const [autoPosNames, setAutoPosNames] = useState([]);
+  const autoPosRef = useRef([]);
+  const dismissedPosRef = useRef(new Set());
+  const posLookedUpForRef = useRef('');
+  const selectedTagNamesRef = useRef([]);
+  selectedTagNamesRef.current = selectedTagNames;
   // Lookups below are async and keyed to whatever `sr` was at the time they
   // started — this tracks the *current* value so a response that resolves
   // after the user has since changed the word can tell it's stale and back
@@ -2885,6 +2898,11 @@ function AddWord({ onAdd, goToList, words, tags }) {
   };
 
   const removeTagName = (name) => {
+    if (autoPosRef.current.includes(name)) {
+      dismissedPosRef.current.add(name);
+      autoPosRef.current = autoPosRef.current.filter((n) => n !== name);
+      setAutoPosNames(autoPosRef.current);
+    }
     setSelectedTagNames((prev) => prev.filter((t) => t !== name));
     setTagExclusions((prev) => {
       const next = { ...prev };
@@ -2892,6 +2910,61 @@ function AddWord({ onAdd, goToList, words, tags }) {
       return next;
     });
   };
+
+  // Suggests the word's part of speech as a tag shortly after the user stops
+  // typing. Best-effort: a word Wiktionary doesn't know, or a failed lookup,
+  // just means no suggestion. Tags added here can be clicked away like any
+  // other, and are dropped again if the word is changed to one with a
+  // different part of speech.
+  useEffect(() => {
+    const word = sr.trim();
+    const dropQuietly = (name) => {
+      setSelectedTagNames((prev) => prev.filter((t) => t !== name));
+      setTagExclusions((prev) => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+    };
+    if (word.length < 2) {
+      autoPosRef.current.forEach(dropQuietly);
+      autoPosRef.current = [];
+      setAutoPosNames([]);
+      posLookedUpForRef.current = '';
+      return undefined;
+    }
+    if (posLookedUpForRef.current === word) return undefined;
+    const timer = setTimeout(async () => {
+      if (srLiveRef.current !== word) return;
+      let names;
+      try {
+        names = await fetchPartsOfSpeechFromWiktionary(word);
+      } catch (err) {
+        return;
+      }
+      if (srLiveRef.current !== word) return;
+      if (posLookedUpForRef.current !== word) {
+        dismissedPosRef.current = new Set();
+        posLookedUpForRef.current = word;
+      }
+      const keep = autoPosRef.current.filter((n) => names.includes(n));
+      autoPosRef.current.filter((n) => !names.includes(n)).forEach(dropQuietly);
+      const added = [];
+      for (const name of names) {
+        if (dismissedPosRef.current.has(name)) continue;
+        if (keep.includes(name)) continue;
+        // Already picked by the user themselves — leave it as theirs.
+        if (selectedTagNamesRef.current.includes(name)) continue;
+        setSelectedTagNames((prev) => (prev.includes(name) ? prev : [...prev, name]));
+        setTagExclusions((prev) => ({ ...prev, [name]: prev[name] || new Set() }));
+        added.push(name);
+      }
+      autoPosRef.current = [...keep, ...added];
+      setAutoPosNames(autoPosRef.current);
+    }, 700);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sr]);
 
   const toggleTagTarget = (tagName, key) => {
     setTagExclusions((prev) => {
@@ -2994,6 +3067,10 @@ function AddWord({ onAdd, goToList, words, tags }) {
     const mainTagNames = selectedTagNames.filter((name) => !tagExclusions[name]?.has('__main__'));
     onAdd(sr, ruVariants.join(', '), example, relatedToAdd, mainTagNames);
     srLiveRef.current = '';
+    autoPosRef.current = [];
+    dismissedPosRef.current = new Set();
+    posLookedUpForRef.current = '';
+    setAutoPosNames([]);
     setSr('');
     setRuVariants([]);
     setVariantsResetKey((k) => k + 1);
@@ -3332,6 +3409,11 @@ function AddWord({ onAdd, goToList, words, tags }) {
           className="w-full rounded-lg px-3.5 py-2.5 mb-1.5 outline-none"
           style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
         />
+        {autoPosNames.length > 0 && (
+          <p style={{ color: '#8892AE', fontSize: '0.78rem', marginBottom: 6 }}>
+            Врста речи са Wiktionary-ја: <span style={{ color: '#D4A54A' }}>{autoPosNames.join(', ')}</span> — кликни на таг да га уклониш.
+          </p>
+        )}
         {(() => {
           const q = tagQuery.trim().toLowerCase();
           const visibleTags = (tags || []).filter((t) => !q || t.name.toLowerCase().includes(q));

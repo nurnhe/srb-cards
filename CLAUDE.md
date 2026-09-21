@@ -265,6 +265,15 @@ in the same change.
 
 ## Key conventions in `App.jsx`
 
+- **Part-of-speech tags**: the Wiktionary page's part-of-speech headings become
+  ordinary tags named in Serbian (`glagol`, `imenica`, `pridev`, `prilog`,
+  `zamenica`, `predlog`, `veznik`, `uzvik`, `broj`, `čestica`) — mapping and
+  helpers in `logic.js` (`posTagNamesFromHeadingIds`), lookup in
+  `fetchPartsOfSpeechFromWiktionary`. On the Add Word form the tag is
+  pre-selected shortly after typing (removable by clicking it); related words
+  created alongside get theirs after saving; the "Одреди врсте речи" button in
+  the Words tab fills in words that have none. No database column — tags only.
+
 - **Serbian script**: stored in whichever script was typed; the *other*
   script is derived on the fly via `cyrillicToLatin`/`latinToCyrillic`
   (deterministic, not stored). `otherScript(sr)` picks the right direction.
