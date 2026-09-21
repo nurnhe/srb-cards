@@ -312,6 +312,9 @@ the test database) in the same change.
 
 ## External APIs in use (all best-effort, still called from the browser)
 
+The lookup code for all of them lives in `src/wiktionary.js` (moved out of
+`App.jsx`; part of the ongoing file split — see the Notion tickets).
+
 These deliberately did **not** move behind the backend: they have nothing to do
 with the database, and the two Wiktionary helpers parse HTML with `DOMParser`,
 which needs a browser. Worth revisiting later — Tatoeba and Glosbe are
