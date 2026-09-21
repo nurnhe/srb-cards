@@ -158,6 +158,15 @@ Conventions worth keeping:
 - `sr`/`ru` are lowercased **on the server** (`backend/src/http.js`), so that
   rule lives in one place. Routes return the saved row and the browser patches
   its state from that rather than re-deriving it.
+- Supabase returns at most **1000 rows per request**, silently cutting the rest
+  off. `GET /api/vocabulary` therefore reads each table page by page
+  (`fetchAllRows` in `backend/src/http.js`, always with a full ordering). Any
+  new query that could return a person's whole table has to do the same.
+- A failed login check only signs the user out when the token itself is bad
+  (`authFailureStatus` → 401); a Supabase hiccup or rate limit answers 503,
+  which the browser treats as an ordinary failed request.
+- Tag names are matched in code, not with `ilike` (`%`, `_` and `*` are
+  wildcards there) — see `ensureTag`.
 - Link and tag writes are idempotent upserts on purpose — re-importing a backup
   re-links pairs that already exist and that has to be a no-op.
 - Supabase errors are logged server-side with the route name. The UI only has

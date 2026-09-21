@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { authFailureStatus } from './http.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
@@ -28,7 +29,15 @@ export async function requireAuth(req, res, next) {
   // it reads the client's own internal session state instead, which this
   // fresh per-request client never has (every request would 401).
   const { data, error } = await userClient.auth.getUser(token);
-  if (error || !data?.user) return res.status(401).json({ error: 'Unauthorized' });
+  if (error) {
+    const status = authFailureStatus(error);
+    if (status === 503) {
+      console.error('[auth] could not check the login:', error.message);
+      return res.status(503).json({ error: 'Login service unavailable, try again' });
+    }
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (!data?.user) return res.status(401).json({ error: 'Unauthorized' });
 
   req.supabase = userClient;
   req.userId = data.user.id;

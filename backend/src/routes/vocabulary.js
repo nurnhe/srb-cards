@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { attachLinksAndTags } from '../shape.js';
-import { route, fail, WORD_COLUMNS } from '../http.js';
+import { route, fail, WORD_COLUMNS, fetchAllRows } from '../http.js';
 
 const router = Router();
 
@@ -11,11 +11,44 @@ const router = Router();
 router.get(
   '/',
   route(async (req, res) => {
+    // Each list is fetched a page at a time (see fetchAllRows) — Supabase
+    // cuts a single request off at 1000 rows, and links (two rows each) and
+    // tag assignments add up faster than words do. Every query has a full
+    // ordering so pages never overlap or skip rows.
+    const exact = { count: 'exact' };
     const [wordsRes, linksRes, tagsRes, wordTagsRes] = await Promise.all([
-      req.supabase.from('words').select(WORD_COLUMNS).order('created_at', { ascending: true }),
-      req.supabase.from('word_links').select('word_id, related_word_id'),
-      req.supabase.from('tags').select('id, name').order('name', { ascending: true }),
-      req.supabase.from('word_tags').select('word_id, tag_id'),
+      fetchAllRows((from, to) =>
+        req.supabase
+          .from('words')
+          .select(WORD_COLUMNS, exact)
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to)
+      ),
+      fetchAllRows((from, to) =>
+        req.supabase
+          .from('word_links')
+          .select('word_id, related_word_id', exact)
+          .order('word_id', { ascending: true })
+          .order('related_word_id', { ascending: true })
+          .range(from, to)
+      ),
+      fetchAllRows((from, to) =>
+        req.supabase
+          .from('tags')
+          .select('id, name', exact)
+          .order('name', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to)
+      ),
+      fetchAllRows((from, to) =>
+        req.supabase
+          .from('word_tags')
+          .select('word_id, tag_id', exact)
+          .order('word_id', { ascending: true })
+          .order('tag_id', { ascending: true })
+          .range(from, to)
+      ),
     ]);
 
     const failed = [wordsRes, linksRes, tagsRes, wordTagsRes].find((r) => r.error);
