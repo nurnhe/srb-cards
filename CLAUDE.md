@@ -78,8 +78,8 @@ Everything runs in one Docker container — the Vite dev server and the API side
 by side, with this folder mounted inside so edits are live:
 
 ```
-cp .env.example .env   # fill in the Supabase URL + anon key
-./run_dev.sh           # http://localhost:5173
+cp .env.example .env.test   # fill in the TEST project's URL + anon key
+./run_dev.sh                # http://localhost:5173, test database
 ```
 
 `./run_dev.sh` builds the image if it is missing, then creates the container if
@@ -95,16 +95,18 @@ it does not exist or starts it if it does. Other flags:
 `.env` is gitignored. Write values **without quotes** — Docker reads the file
 itself and treats quotes as part of the value.
 
-**By default, local dev hits the real production Supabase database** — test
-data really gets saved there. For anything risky (isolation tests, imports,
-schema experiments) use the separate test project instead:
+**Local dev uses the separate TEST Supabase project by default**, so nothing
+you try can touch real words:
 
 ```
-./run_dev.sh --test    # uses .env.test (a second Supabase project) — prints a TEST banner
-./run_dev.sh           # back to the real one (.env); the two never run together
+./run_dev.sh           # test database (.env.test) — prints a TEST banner
+./run_dev.sh --real    # the REAL production database (.env) — prints a warning
 ```
 
-`.env.test` has the same five settings as `.env`, pointing at the test project
+The two never run together. Use `--real` only to look at actual words or to
+check something on real data.
+
+`.env.test` has the same three settings as `.env` (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `PORT`), pointing at the test project
 (both files are gitignored). `supabase/schema.sql` builds the whole schema in a
 fresh project — **keep it in step with any schema change to production**, and
 run each schema change in both projects. Test accounts are created by hand in
