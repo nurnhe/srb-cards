@@ -46,6 +46,10 @@ filtering (see "Database schema" below for the actual policies).
   The built-in sender only allows a few emails per hour.
 - The login screens (`LoginGate`, `NewPasswordGate`) live in `src/Auth.jsx`; fonts
   and the font-loading hook are in `src/theme.js`.
+- Small shared components live in `src/components/` (`IpaText`, `PronounceButton`,
+  `InflectionTables`, `VariantsEditor`, `WordStats`, `Pills`). The three big screens
+  (`AddWord`, `WordsList`, `Practice`) are still in `App.jsx` — see the Notion
+  tickets for the rest of the split.
 - **`backend/src/auth.js`**'s `requireAuth` middleware reads the
   `Authorization: Bearer <token>` header the frontend sends, and builds a
   **fresh Supabase client per request** using the `anon` key with that token
