@@ -789,10 +789,11 @@ function LoginGate() {
   );
 }
 
-// Shown after someone follows the link from a password-reset email: Supabase
-// signs them in with a temporary recovery session and App() flags it, and
-// this form sets the new password on that session.
-function NewPasswordGate({ onDone }) {
+// Shown after someone follows the link from a password-reset or invitation
+// email: Supabase signs them in with a temporary session and App() flags it,
+// and this form sets the password on that session. An invited account has no
+// password at all until this is submitted.
+function NewPasswordGate({ onDone, invite = false }) {
   const [password, setPassword] = useState('');
   const [again, setAgain] = useState('');
   const [error, setError] = useState(null);
@@ -820,7 +821,7 @@ function NewPasswordGate({ onDone }) {
   return (
     <AuthCard onSubmit={submit}>
       <div className="text-center mb-4 text-sm" style={{ color: '#8892AE' }}>
-        Изабери нову лозинку
+        {invite ? 'Добродошли! Изабери лозинку за свој налог' : 'Изабери нову лозинку'}
       </div>
       <input
         type="password"
@@ -830,7 +831,7 @@ function NewPasswordGate({ onDone }) {
           setPassword(e.target.value);
           setError(null);
         }}
-        placeholder="нова лозинка"
+        placeholder={invite ? 'лозинка' : 'нова лозинка'}
         autoComplete="new-password"
         className="w-full rounded-lg px-3 py-2.5 mb-2.5 outline-none"
         style={AUTH_INPUT_STYLE}
@@ -879,11 +880,15 @@ export default function App() {
   // stays a plain boolean (not the session object) so effects keyed on it
   // don't refire on every silent token refresh (~every 55 min).
   const [authed, setAuthed] = useState(null);
-  // True while someone who followed a password-reset email link picks a new
-  // password (Supabase signs them in with a temporary recovery session first).
-  // Read from the address too, because Supabase may announce the recovery
-  // before the listener below exists.
-  const [recovering, setRecovering] = useState(() => /type=recovery/.test(window.location.hash));
+  // Set while someone who followed an emailed link — a password reset, or an
+  // invitation to a brand-new account — picks their password. Supabase signs
+  // them in with a temporary session first. Read from the address as well as
+  // from the auth event, because Supabase may announce the event before the
+  // listener below exists (an invitation has no dedicated event at all).
+  const [passwordFlow, setPasswordFlow] = useState(() => {
+    const m = window.location.hash.match(/type=(recovery|invite)/);
+    return m ? m[1] : null;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -891,7 +896,7 @@ export default function App() {
     getSupabase()
       .then(async (supabase) => {
         const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
-          if (event === 'PASSWORD_RECOVERY') setRecovering(true);
+          if (event === 'PASSWORD_RECOVERY') setPasswordFlow('recovery');
           setAuthed(!!session);
         });
         subscription = listener.subscription;
@@ -1230,7 +1235,19 @@ export default function App() {
   // — render nothing rather than flashing the login form for one frame.
   if (authed === null) return null;
   if (!authed) return <LoginGate />;
-  if (recovering) return <NewPasswordGate onDone={() => setRecovering(false)} />;
+  if (passwordFlow) {
+    return (
+      <NewPasswordGate
+        invite={passwordFlow === 'invite'}
+        onDone={() => {
+          // Drop the link's leftovers from the address so a reload doesn't
+          // show this screen again.
+          window.history.replaceState(null, '', window.location.pathname + window.location.search);
+          setPasswordFlow(null);
+        }}
+      />
+    );
+  }
 
   return (
     <div
