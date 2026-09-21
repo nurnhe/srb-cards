@@ -1378,7 +1378,7 @@ function FamiliesView({ words, goToList }) {
     return (
       <div className="text-center py-16" style={{ color: '#8892AE' }}>
         <p className="mb-4">Још нема повезаних речи.</p>
-        <p className="text-sm mb-5">Повежи речи истог корена (нпр. глагол и именицу) у списку — овде ће се појавити као породица.</p>
+        <p className="text-sm mb-5">Повежи речи истог корена (нпр. глагол и именицу) у списку — овде ће се појавити као сродне речи.</p>
         <button
           type="button"
           onClick={goToList}
@@ -1394,7 +1394,7 @@ function FamiliesView({ words, goToList }) {
   return (
     <div className="space-y-3">
       <div style={{ fontFamily: FONT_MONO, color: '#5C6690', fontSize: '0.75rem', letterSpacing: 1 }}>
-        {families.length} ПОРОДИЦА
+        СРОДНЕ РЕЧИ · {families.length}
       </div>
       {families.map((family) => {
         const rootId = pickFamilyRoot(family, wordsById);
@@ -1951,7 +1951,7 @@ function WordsTab(props) {
     <>
       <div className="flex justify-center gap-2 mb-4">
         <DirectionPill active={view === 'list'} label="СПИСАК" onClick={() => setView('list')} />
-        <DirectionPill active={view === 'families'} label="ПОРОДИЦЕ" onClick={() => setView('families')} />
+        <DirectionPill active={view === 'families'} label="СРОДНЕ РЕЧИ" onClick={() => setView('families')} />
       </div>
       {view === 'list' ? (
         <WordsList {...props} />
