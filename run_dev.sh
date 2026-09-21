@@ -9,24 +9,27 @@
 #                             package.json or adding a dependency
 #   ./run_dev.sh --recreate   throw the container away and make a fresh one
 #   ./run_dev.sh --stop       stop it (both the normal and the test one)
-#   ./run_dev.sh --test       use the separate TEST database (settings in
-#                             .env.test) instead of the real one (.env)
+#   ./run_dev.sh --real       use the REAL database (.env) instead — without
+#                             this flag it always uses the TEST database
+#                             (.env.test), so real words are never touched
+#                             by accident
+#   ./run_dev.sh --test       same as the default, spelled out
 #
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 IMAGE="srb-cards-dev"
-CONTAINER="srb-cards-dev"
-OTHER_CONTAINER="srb-cards-dev-test"
-ENV_FILE=".env"
+CONTAINER="srb-cards-dev-test"
+OTHER_CONTAINER="srb-cards-dev"
+ENV_FILE=".env.test"
 APP_PORT=5173
 API_PORT=3000
 
 REBUILD=false
 RECREATE=false
 STOP=false
-TEST=false
+TEST=true
 
 for arg in "$@"; do
   case "$arg" in
@@ -34,15 +37,16 @@ for arg in "$@"; do
     --recreate) RECREATE=true ;;
     --stop)     STOP=true ;;
     --test)     TEST=true ;;
-    -h|--help)  sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --real)     TEST=false ;;
+    -h|--help)  sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown argument: $arg (see ./run_dev.sh --help)" >&2; exit 1 ;;
   esac
 done
 
-if [ "$TEST" = true ]; then
-  CONTAINER="srb-cards-dev-test"
-  OTHER_CONTAINER="srb-cards-dev"
-  ENV_FILE=".env.test"
+if [ "$TEST" = false ]; then
+  CONTAINER="srb-cards-dev"
+  OTHER_CONTAINER="srb-cards-dev-test"
+  ENV_FILE=".env"
 fi
 
 if ! docker info >/dev/null 2>&1; then
@@ -57,6 +61,12 @@ if [ "$STOP" = true ]; then
   done
   [ "$stopped" = true ] || echo "Nothing was running."
   exit 0
+fi
+
+if [ "$TEST" = true ] && [ ! -f .env.test ]; then
+  echo "There is no .env.test file, so there is no test database to use." >&2
+  echo "Create it (see CLAUDE.md), or run ./run_dev.sh --real to use the real one." >&2
+  exit 1
 fi
 
 # Both containers use the same ports, so only one can run at a time.
@@ -121,7 +131,7 @@ echo
 if [ "$TEST" = true ]; then
   echo "  *** TEST DATABASE (.env.test) — your real words are not touched ***"
 else
-  echo "  Real database (.env)"
+  echo "  !!! REAL DATABASE (.env) — changes here are real !!!"
 fi
 echo "  App:  http://localhost:$APP_PORT"
 echo "  API:  http://localhost:$API_PORT/api/health"
