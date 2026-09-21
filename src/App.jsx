@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Shuffle, Trash2, Check, X, ArrowLeftRight, BookMarked, Pencil, Link2, Search, Loader2, Tag, Volume2, Download, Upload, Table2, LogOut, Timer, Percent } from 'lucide-react';
 import * as api from './api';
-import { supabase } from './supabaseClient';
+import { getSupabase } from './supabaseClient';
 import {
   otherScript,
   normalize,
@@ -667,6 +667,7 @@ function LoginGate() {
     setChecking(true);
     setError(null);
     try {
+      const supabase = await getSupabase();
       const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (signInError) setError(signInError.message);
     } catch (err) {
@@ -755,15 +756,25 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!cancelled) setAuthed(!!data.session);
-    });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAuthed(!!session);
-    });
+    let subscription;
+    getSupabase()
+      .then(async (supabase) => {
+        const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+          setAuthed(!!session);
+        });
+        subscription = listener.subscription;
+        if (cancelled) return subscription.unsubscribe();
+        const { data } = await supabase.auth.getSession();
+        if (!cancelled) setAuthed(!!data.session);
+      })
+      // Couldn't reach the server for the sign-in settings: show the login
+      // form, which retries the same lookup when submitted.
+      .catch(() => {
+        if (!cancelled) setAuthed(false);
+      });
     return () => {
       cancelled = true;
-      listener.subscription.unsubscribe();
+      subscription?.unsubscribe();
     };
   }, []);
 
@@ -1094,7 +1105,7 @@ export default function App() {
       style={{ background: '#12192E', fontFamily: FONT_BODY }}
     >
       <div className="max-w-2xl mx-auto px-5 py-8">
-        <Header onLogout={() => supabase.auth.signOut()} />
+        <Header onLogout={async () => (await getSupabase()).auth.signOut()} />
         <TabBar tab={tab} setTab={setTab} count={words.length} />
 
         {!ready ? (

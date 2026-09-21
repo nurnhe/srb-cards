@@ -7,7 +7,7 @@
 // supabase-js used to return, so call sites in App.jsx keep their familiar
 // shape.
 
-import { supabase } from './supabaseClient';
+import { getSupabase } from './supabaseClient';
 
 // Empty in dev: Vite proxies /api to the backend (see vite.config.js). Set
 // VITE_API_URL once the backend is deployed somewhere.
@@ -17,6 +17,7 @@ async function request(path, { method = 'GET', body } = {}) {
   try {
     // Fetched fresh on every call, not cached, so Supabase's own automatic
     // token refresh (the access token is short-lived) is always picked up.
+    const supabase = await getSupabase();
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData?.session?.access_token;
     const res = await fetch(`${BASE}/api${path}`, {

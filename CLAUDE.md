@@ -49,14 +49,15 @@ filtering (see "Database schema" below for the actual policies).
     explicitly. Calling `getUser()` with no argument reads the client's own
     internal session state, which a freshly-built per-request client never
     has — every request would 401.
-- **`src/supabaseClient.js`** is a browser Supabase client used *only* for
-  auth (`signInWithPassword`, `signOut`, `getSession`,
+- **`src/supabaseClient.js`** builds a browser Supabase client (`getSupabase()`,
+  created once after fetching the URL and anon key from `/api/config`) used
+  *only* for auth (`signInWithPassword`, `signOut`, `getSession`,
   `onAuthStateChange`) — not for data. The app still calls its own Express
   backend for every data operation via `src/api.js`, which reads
   `supabase.auth.getSession()` fresh on every request and sends the
   session's access token as the `Authorization` header.
-- The `anon` key (`SUPABASE_ANON_KEY` backend-side, `VITE_SUPABASE_ANON_KEY`
-  frontend-side) is the one Supabase key that's *designed* to be public —
+- The `anon` key (`SUPABASE_ANON_KEY`, also served to the browser through
+  `GET /api/config`) is the one Supabase key that's *designed* to be public —
   RLS is what actually protects the data, not secrecy of this key. There is
   no `service_role` key anywhere in this app anymore (it bypassed RLS
   entirely, which is exactly the opposite of what per-user isolation needs);
@@ -125,6 +126,7 @@ of running the frontend and backend on genuinely separate hosts.
 | `POST /api/words/:id/tags` | Tag by name, creating the tag if needed; returns the tag |
 | `DELETE /api/words/:wordId/tags/:tagId` | Remove a tag from a word |
 | `GET /api/health` | Liveness check |
+| `GET /api/config` | Public Supabase URL + anon key for the browser's sign-in (no login needed) |
 
 Conventions worth keeping:
 - Each `src/api.js` function resolves to `{ data, error }` — the same shape
@@ -149,15 +151,14 @@ Vite builds the site, and the Express backend serves those files itself, next to
 `/api`. So the site and the API answer on the same port, and the browser keeps
 calling `/api` with relative addresses — `VITE_API_URL` is not needed.
 
-The backend's settings are handed to the container when it starts. The one
-exception is the two public sign-in values, `VITE_SUPABASE_URL` and
-`VITE_SUPABASE_ANON_KEY` — Vite bakes `VITE_*` into the site at build time, so
-they must be passed as build args or the login page will not work:
+Nothing is configured at build time. All settings are handed to the container
+when it starts. The browser gets the public Supabase URL and anon key from the
+backend's `/api/config` route at run time (`src/supabaseClient.js`), so no
+`VITE_SUPABASE_*` values or build arguments are needed — an earlier version
+baked them in through build args, and the hosting panel's build failed:
 
 ```
-docker build \
-  --build-arg VITE_SUPABASE_URL=https://xxxx.supabase.co \
-  --build-arg VITE_SUPABASE_ANON_KEY=eyJ... -t srb-cards .
+docker build -t srb-cards .
 docker run --rm --name srb-cards-prod \
   --env-file .env -p 127.0.0.1:3000:3000 srb-cards
 # http://localhost:3000
