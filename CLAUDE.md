@@ -32,9 +32,14 @@ filtering (see "Database schema" below for the actual policies).
 
 - **Invite-only, no self-service sign-up.** Kira creates every account herself
   in the Supabase Dashboard (Authentication → Users → Add User, auto-confirm
-  checked) and relays the password to that person directly — there's no
-  sign-up UI, no password-reset UI, and no email/SMTP involved. If someone's
-  locked out, Kira resets their password from the dashboard.
+  checked) and relays the initial password to that person directly — there's
+  no sign-up UI. Locked-out users use "Заборављена лозинка?" on the login
+  form: Supabase's built-in email sender mails a link (`resetPasswordForEmail`,
+  `redirectTo` = the site's own address, which must be listed under Supabase →
+  Authentication → URL Configuration → Redirect URLs), and following it lands
+  on `NewPasswordGate` in `App.jsx` (flagged by the `PASSWORD_RECOVERY` event
+  or `type=recovery` in the address) to pick a new password. The built-in
+  sender only allows a few emails per hour.
 - **`backend/src/auth.js`**'s `requireAuth` middleware reads the
   `Authorization: Bearer <token>` header the frontend sends, and builds a
   **fresh Supabase client per request** using the `anon` key with that token
