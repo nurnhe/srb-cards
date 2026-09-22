@@ -30,6 +30,9 @@ import {
   wordsNeedingPartOfSpeech,
   PART_OF_SPEECH_TAG_NAMES,
   mergeVariants,
+  posAbbreviation,
+  partOfSpeechTagIds,
+  rankTagsByUsage,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -1046,5 +1049,66 @@ describe('mergeVariants', () => {
     const list = ['а'];
     mergeVariants(list, 'б');
     expect(list).toEqual(['а']);
+  });
+});
+
+describe('posAbbreviation', () => {
+  it('shortens every part-of-speech tag name', () => {
+    expect(posAbbreviation('glagol')).toBe('гл.');
+    expect(posAbbreviation('imenica')).toBe('им.');
+    expect(posAbbreviation('pridev')).toBe('прид.');
+    expect(posAbbreviation('čestica')).toBe('чест.');
+  });
+
+  it('is case-insensitive', () => {
+    expect(posAbbreviation('Glagol')).toBe('гл.');
+  });
+
+  it('falls back to the name itself for anything not a part-of-speech tag', () => {
+    expect(posAbbreviation('hrana')).toBe('hrana');
+    expect(posAbbreviation('')).toBe('');
+  });
+});
+
+describe('partOfSpeechTagIds', () => {
+  it('picks out only the part-of-speech tags, by id', () => {
+    const tags = [
+      { id: 't1', name: 'glagol' },
+      { id: 't2', name: 'hrana' },
+      { id: 't3', name: 'Imenica' },
+    ];
+    expect(partOfSpeechTagIds(tags)).toEqual(new Set(['t1', 't3']));
+  });
+
+  it('returns an empty set for no tags', () => {
+    expect(partOfSpeechTagIds([])).toEqual(new Set());
+    expect(partOfSpeechTagIds(undefined)).toEqual(new Set());
+  });
+});
+
+describe('rankTagsByUsage', () => {
+  const words = (tagIdLists) => tagIdLists.map((tagIds) => ({ tagIds }));
+
+  it('orders tags by how many words carry them, most used first', () => {
+    const ranked = rankTagsByUsage(
+      ['rare', 'common', 'medium'],
+      words([['common'], ['common', 'medium'], ['common'], ['medium'], ['rare']])
+    );
+    expect(ranked).toEqual(['common', 'medium', 'rare']);
+  });
+
+  it('keeps the original order for a tie (stable sort)', () => {
+    expect(rankTagsByUsage(['a', 'b', 'c'], words([['a'], ['b'], ['c']]))).toEqual(['a', 'b', 'c']);
+  });
+
+  it('does not mutate the input list', () => {
+    const tagIds = ['a', 'b'];
+    rankTagsByUsage(tagIds, words([['b']]));
+    expect(tagIds).toEqual(['a', 'b']);
+  });
+
+  it('copes with no words and with tags nobody uses', () => {
+    expect(rankTagsByUsage(['a', 'b'], [])).toEqual(['a', 'b']);
+    expect(rankTagsByUsage([], words([['a']]))).toEqual([]);
   });
 });

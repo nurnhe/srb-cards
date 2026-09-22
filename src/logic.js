@@ -585,6 +585,37 @@ const POS_HEADING_TO_TAG = {
 
 export const PART_OF_SPEECH_TAG_NAMES = [...new Set(Object.values(POS_HEADING_TO_TAG))];
 
+// Short forms for the part-of-speech tags — used wherever they're shown next
+// to a word instead of as a full-size tag chip (the Words list and Practice
+// tag bars), since almost every word carries one now and spelling it out
+// every time is most of what made those bars crowded.
+const POS_ABBREVIATIONS = {
+  glagol: 'гл.',
+  imenica: 'им.',
+  pridev: 'прид.',
+  prilog: 'прил.',
+  zamenica: 'зам.',
+  predlog: 'предл.',
+  veznik: 'везн.',
+  uzvik: 'узв.',
+  broj: 'бр.',
+  čestica: 'чест.',
+};
+
+// Falls back to the tag's own name for anything not in the table above, so a
+// future part-of-speech tag added to POS_HEADING_TO_TAG without a matching
+// abbreviation still shows something instead of nothing.
+export function posAbbreviation(tagName) {
+  return POS_ABBREVIATIONS[String(tagName || '').toLowerCase()] || tagName;
+}
+
+// The ids of tags in `tags` whose name is one of the part-of-speech names.
+export function partOfSpeechTagIds(tags) {
+  return new Set(
+    (tags || []).filter((t) => PART_OF_SPEECH_TAG_NAMES.includes(t.name.toLowerCase())).map((t) => t.id)
+  );
+}
+
 // Takes the heading ids found in a Wiktionary page's Serbo-Croatian section
 // (like "Verb", "Noun_2", "Derived_terms") and returns the tag names for the
 // parts of speech among them, each once, in order of appearance. The "_2"
@@ -601,8 +632,20 @@ export function posTagNamesFromHeadingIds(ids) {
 
 // Words that carry none of the part-of-speech tags yet.
 export function wordsNeedingPartOfSpeech(words, tags) {
-  const posTagIds = new Set(
-    (tags || []).filter((t) => PART_OF_SPEECH_TAG_NAMES.includes(t.name.toLowerCase())).map((t) => t.id)
-  );
+  const posTagIds = partOfSpeechTagIds(tags);
   return words.filter((w) => !(w.tagIds || []).some((id) => posTagIds.has(id)));
+}
+
+// Orders tag ids by how many words carry each one, most-used first — ties
+// keep their original relative order (a stable sort), so the result doesn't
+// jitter between renders. Used to decide which of someone's own tags are
+// worth showing by default in a crowded tag bar, before "show more".
+export function rankTagsByUsage(tagIds, words) {
+  const counts = new Map(tagIds.map((id) => [id, 0]));
+  (words || []).forEach((w) => {
+    (w.tagIds || []).forEach((id) => {
+      if (counts.has(id)) counts.set(id, counts.get(id) + 1);
+    });
+  });
+  return [...tagIds].sort((a, b) => counts.get(b) - counts.get(a));
 }

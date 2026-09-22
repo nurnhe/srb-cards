@@ -54,3 +54,67 @@ export function TagFilterPill({ active, label, onClick }) {
     </button>
   );
 }
+
+// A part-of-speech tag shown as a small badge rather than a full-size tag
+// pill — used both where it's clickable (toggling it as a filter, like
+// TagFilterPill) and where it's just shown next to a word with a way to
+// remove it. Only one of onClick/onRemove is ever passed by a given caller;
+// a single element can't be both a button and contain one (nested buttons
+// are invalid HTML and don't click reliably), so which prop is given decides
+// the shape.
+export function PosBadge({ label, active, onClick, onRemove }) {
+  const style = {
+    fontFamily: FONT_MONO,
+    fontSize: '0.68rem',
+    padding: '2px 6px',
+    lineHeight: 1.3,
+    borderRadius: 5,
+  };
+  if (onRemove) {
+    return (
+      <span className="inline-flex items-center gap-1" style={{ ...style, color: '#5C6690', border: '1px solid #2A3355' }}>
+        {label}
+        <button type="button" onClick={onRemove} aria-label={`Уклони ${label}`} style={{ color: '#5C6690', lineHeight: 1 }}>
+          ×
+        </button>
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        ...style,
+        color: active ? '#12192E' : '#5C6690',
+        background: active ? '#D4A54A' : 'transparent',
+        border: `1px solid ${active ? '#D4A54A' : '#2A3355'}`,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+// "+N" — reveals the rest of a capped list of tags. Styled as a small dashed
+// chip so it reads as part of the row instead of a separate stray link.
+export function ShowMoreTagsButton({ count, onClick, label }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        fontFamily: FONT_MONO,
+        fontSize: '0.68rem',
+        padding: '2px 8px',
+        lineHeight: 1.3,
+        color: '#8892AE',
+        border: '1px dashed #3A4570',
+        borderRadius: 5,
+        background: 'none',
+      }}
+    >
+      {label || `+${count}`}
+    </button>
+  );
+}

@@ -3,8 +3,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeftRight, Timer, Check, X, Shuffle } from 'lucide-react';
 import { FONT_DISPLAY, FONT_MONO, FONT_BODY } from './theme';
-import { buildWeightedDeck, isAnswerCorrect, isTypoCorrected, requeueMissedWord, otherScript } from './logic';
-import { DirectionPill, TagFilterPill } from './components/Pills';
+import {
+  buildWeightedDeck,
+  isAnswerCorrect,
+  isTypoCorrected,
+  requeueMissedWord,
+  otherScript,
+  partOfSpeechTagIds,
+  posAbbreviation,
+  rankTagsByUsage,
+} from './logic';
+import { DirectionPill, TagFilterPill, PosBadge, ShowMoreTagsButton } from './components/Pills';
 import { PronounceButton } from './components/PronounceButton';
 import { IpaText } from './components/IpaText';
 
@@ -173,7 +182,7 @@ export function Practice({ words, tags, onAnswer }) {
     if (pool.length === 0 && tagFilter.size > 0) {
       return (
         <div>
-          <TagScopeBar tags={tags} tagFilter={tagFilter} onChange={setTagFilter} />
+          <TagScopeBar tags={tags} words={words} tagFilter={tagFilter} onChange={setTagFilter} />
           <div
             className="text-center rounded-2xl py-16 px-6"
             style={{ background: '#1B2440', border: '1px solid #2A3355' }}
@@ -263,7 +272,7 @@ export function Practice({ words, tags, onAnswer }) {
 
   return (
     <div>
-      <TagScopeBar tags={tags} tagFilter={tagFilter} onChange={setTagFilter} />
+      <TagScopeBar tags={tags} words={words} tagFilter={tagFilter} onChange={setTagFilter} />
 
       {/* direction toggle */}
       <div className="flex items-center justify-center gap-3 mb-5">
@@ -485,7 +494,16 @@ export function Practice({ words, tags, onAnswer }) {
 
 // tagFilter is a Set of tag ids — a word matches only if it has ALL of
 // the selected tags, so checking multiple pills narrows the pool.
-function TagScopeBar({ tags, tagFilter, onChange }) {
+//
+// Part-of-speech tags are shown as small badges rather than full pills (see
+// the same treatment in WordsList) — they land on almost every word now, so
+// listing them the same size as everything else was most of what made this
+// bar crowded. The custom tags are ranked by how many words carry them and
+// capped, with a "+N" to reveal the rest.
+const TAG_SCOPE_FILTER_CAP = 6;
+
+function TagScopeBar({ tags, words, tagFilter, onChange }) {
+  const [expanded, setExpanded] = useState(false);
   if (!tags || tags.length === 0) return null;
   const toggle = (id) => {
     const next = new Set(tagFilter);
@@ -493,12 +511,34 @@ function TagScopeBar({ tags, tagFilter, onChange }) {
     else next.add(id);
     onChange(next);
   };
+  const posTagIds = partOfSpeechTagIds(tags);
+  const tagById = Object.fromEntries(tags.map((t) => [t.id, t]));
+  const posTags = tags.filter((t) => posTagIds.has(t.id));
+  const customTags = tags.filter((t) => !posTagIds.has(t.id));
+  const rankedCustomTags = rankTagsByUsage(customTags.map((t) => t.id), words).map((id) => tagById[id]);
+  const shownCustomTags = expanded ? rankedCustomTags : rankedCustomTags.slice(0, TAG_SCOPE_FILTER_CAP);
+
   return (
-    <div className="flex flex-wrap justify-center gap-1.5 mb-4">
-      <TagFilterPill active={tagFilter.size === 0} label="Све теме" onClick={() => onChange(new Set())} />
-      {tags.map((t) => (
-        <TagFilterPill key={t.id} active={tagFilter.has(t.id)} label={t.name} onClick={() => toggle(t.id)} />
-      ))}
+    <div className="mb-4">
+      <div className="flex flex-wrap justify-center items-center gap-1.5">
+        <TagFilterPill active={tagFilter.size === 0} label="Све теме" onClick={() => onChange(new Set())} />
+        {posTags.map((t) => (
+          <PosBadge key={t.id} label={posAbbreviation(t.name)} active={tagFilter.has(t.id)} onClick={() => toggle(t.id)} />
+        ))}
+      </div>
+      {customTags.length > 0 && (
+        <div className="flex flex-wrap justify-center items-center gap-1.5 mt-1.5">
+          {shownCustomTags.map((t) => (
+            <TagFilterPill key={t.id} active={tagFilter.has(t.id)} label={t.name} onClick={() => toggle(t.id)} />
+          ))}
+          {!expanded && rankedCustomTags.length > TAG_SCOPE_FILTER_CAP && (
+            <ShowMoreTagsButton
+              count={rankedCustomTags.length - TAG_SCOPE_FILTER_CAP}
+              onClick={() => setExpanded(true)}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }

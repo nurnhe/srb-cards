@@ -4,8 +4,20 @@ import React, { useRef, useState } from 'react';
 import { Download, Loader2, Upload, Tag, Percent, Table2, Link2, Pencil, Trash2 } from 'lucide-react';
 import { FONT_MONO, FONT_DISPLAY, FONT_BODY } from './theme';
 import { fetchInflectionTables } from './wiktionary';
-import { computeTagAccuracy, buildExportData, parseImportData, filterWordsByQuery, parseVariants, normalize, findLikelyTypoOf, otherScript } from './logic';
-import { SortPill, TagFilterPill } from './components/Pills';
+import {
+  computeTagAccuracy,
+  buildExportData,
+  parseImportData,
+  filterWordsByQuery,
+  parseVariants,
+  normalize,
+  findLikelyTypoOf,
+  otherScript,
+  partOfSpeechTagIds,
+  posAbbreviation,
+  rankTagsByUsage,
+} from './logic';
+import { SortPill, TagFilterPill, PosBadge, ShowMoreTagsButton } from './components/Pills';
 import { VariantsEditor } from './components/VariantsEditor';
 import { PronounceButton } from './components/PronounceButton';
 import { IpaText } from './components/IpaText';
@@ -58,6 +70,12 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
   const [inflectionState, setInflectionState] = useState('idle'); // idle | loading | notfound | error
   const [deletingId, setDeletingId] = useState(null); // word currently showing its delete confirmation
   const [activeTagFilter, setActiveTagFilter] = useState(new Set()); // Set of tag ids; empty = all
+  // The tag filter bar and each word's own tag list are capped by default —
+  // almost every word carries a part-of-speech tag now, which used to mean
+  // every tag, everywhere, all the time. These track which ones the user has
+  // asked to see in full.
+  const [tagFilterExpanded, setTagFilterExpanded] = useState(false);
+  const [expandedCardTags, setExpandedCardTags] = useState(new Set()); // word ids
   const [sortMode, setSortMode] = useState('alpha'); // alpha | hardest
   const [searchQuery, setSearchQuery] = useState('');
   const [importState, setImportState] = useState('idle'); // idle | loading | error | done
@@ -167,6 +185,28 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
   const searched = filterWordsByQuery(filtered, searchQuery);
   const byId = Object.fromEntries(words.map((w) => [w.id, w]));
   const tagById = Object.fromEntries((tags || []).map((t) => [t.id, t]));
+
+  // Part-of-speech tags (glagol, imenica...) are shown as small badges rather
+  // than full tag pills — they land on almost every word now, so treating
+  // them like any other tag was most of what made this screen crowded. Only
+  // the custom tags are ranked/capped, since there are usually just a
+  // handful of part-of-speech ones and hiding any of those would remove a
+  // real filter, not just declutter the view.
+  const posTagIds = partOfSpeechTagIds(tags);
+  const posTags = (tags || []).filter((t) => posTagIds.has(t.id));
+  const customTags = (tags || []).filter((t) => !posTagIds.has(t.id));
+  const rankedCustomTags = rankTagsByUsage(customTags.map((t) => t.id), words).map((id) => tagById[id]);
+  const CUSTOM_TAG_FILTER_CAP = 6;
+  const CARD_TAG_CAP = 2;
+
+  const toggleTagFilter = (id) => {
+    setActiveTagFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const startEdit = (w) => {
     setEditingId(w.id);
@@ -384,27 +424,35 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
       />
 
       {tags && tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-1" style={{ paddingLeft: 4 }}>
-          <TagFilterPill
-            active={activeTagFilter.size === 0}
-            label="Све"
-            onClick={() => setActiveTagFilter(new Set())}
-          />
-          {tags.map((t) => (
+        <div className="mb-1" style={{ paddingLeft: 4 }}>
+          <div className="flex flex-wrap items-center gap-1.5">
             <TagFilterPill
-              key={t.id}
-              active={activeTagFilter.has(t.id)}
-              label={t.name}
-              onClick={() =>
-                setActiveTagFilter((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(t.id)) next.delete(t.id);
-                  else next.add(t.id);
-                  return next;
-                })
-              }
+              active={activeTagFilter.size === 0}
+              label="Све"
+              onClick={() => setActiveTagFilter(new Set())}
             />
-          ))}
+            {posTags.map((t) => (
+              <PosBadge
+                key={t.id}
+                label={posAbbreviation(t.name)}
+                active={activeTagFilter.has(t.id)}
+                onClick={() => toggleTagFilter(t.id)}
+              />
+            ))}
+          </div>
+          {customTags.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+              {(tagFilterExpanded ? rankedCustomTags : rankedCustomTags.slice(0, CUSTOM_TAG_FILTER_CAP)).map((t) => (
+                <TagFilterPill key={t.id} active={activeTagFilter.has(t.id)} label={t.name} onClick={() => toggleTagFilter(t.id)} />
+              ))}
+              {!tagFilterExpanded && rankedCustomTags.length > CUSTOM_TAG_FILTER_CAP && (
+                <ShowMoreTagsButton
+                  count={rankedCustomTags.length - CUSTOM_TAG_FILTER_CAP}
+                  onClick={() => setTagFilterExpanded(true)}
+                />
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -416,6 +464,10 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
 
       {searched.map((w) => {
         const related = w.relatedIds.map((rid) => byId[rid]).filter(Boolean);
+        const wordTags = w.tagIds.map((tid) => tagById[tid]).filter(Boolean);
+        const wordPosTags = wordTags.filter((t) => posTagIds.has(t.id));
+        const wordCustomTags = wordTags.filter((t) => !posTagIds.has(t.id));
+        const cardTagsExpanded = expandedCardTags.has(w.id);
         return (
           <div
             key={w.id}
@@ -479,6 +531,9 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
                     {w.sr}
                     <PronounceButton text={w.sr} size={14} />
                     <IpaText text={w.sr} />
+                    {wordPosTags.map((t) => (
+                      <PosBadge key={t.id} label={posAbbreviation(t.name)} onRemove={() => onUntag(w.id, t.id)} />
+                    ))}
                   </div>
                   {otherScript(w.sr) && (
                     <div style={{ color: '#5C6690', fontSize: '0.78rem', marginTop: 1 }}>
@@ -523,32 +578,35 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
                       ))}
                     </div>
                   )}
-                  {w.tagIds.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {w.tagIds
-                        .map((tid) => tagById[tid])
-                        .filter(Boolean)
-                        .map((t) => (
-                          <span
-                            key={t.id}
-                            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
-                            style={{
-                              background: '#2A2410',
-                              color: '#D4A54A',
-                              fontSize: '0.72rem',
-                              fontFamily: FONT_MONO,
-                            }}
+                  {wordCustomTags.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      {(cardTagsExpanded ? wordCustomTags : wordCustomTags.slice(0, CARD_TAG_CAP)).map((t) => (
+                        <span
+                          key={t.id}
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                          style={{
+                            background: '#2A2410',
+                            color: '#D4A54A',
+                            fontSize: '0.72rem',
+                            fontFamily: FONT_MONO,
+                          }}
+                        >
+                          {t.name}
+                          <button
+                            onClick={() => onUntag(w.id, t.id)}
+                            aria-label={`Уклони таг ${t.name}`}
+                            style={{ color: '#9C7E30', lineHeight: 1 }}
                           >
-                            {t.name}
-                            <button
-                              onClick={() => onUntag(w.id, t.id)}
-                              aria-label={`Уклони таг ${t.name}`}
-                              style={{ color: '#9C7E30', lineHeight: 1 }}
-                            >
-                              ×
-                            </button>
-                          </span>
-                        ))}
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      {!cardTagsExpanded && wordCustomTags.length > CARD_TAG_CAP && (
+                        <ShowMoreTagsButton
+                          count={wordCustomTags.length - CARD_TAG_CAP}
+                          onClick={() => setExpandedCardTags((prev) => new Set(prev).add(w.id))}
+                        />
+                      )}
                     </div>
                   )}
                 </div>
