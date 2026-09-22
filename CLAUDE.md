@@ -300,6 +300,19 @@ the test database) in the same change.
   pre-selected shortly after typing (removable by clicking it); related words
   created alongside get theirs after saving; the "Одреди врсте речи" button in
   the Words tab fills in words that have none. No database column — tags only.
+- **Compact tag display**: once part-of-speech tagging meant almost every word
+  carried one, showing it as a full-size tag pill everywhere made the Words
+  list and Practice's tag bar too crowded. Both now split part-of-speech from
+  a person's own tags: `partOfSpeechTagIds(tags)` (`logic.js`) picks out which
+  tag ids are part-of-speech; those render as small abbreviated `PosBadge`s
+  (`гл.`, `им.`, ... — `posAbbreviation`, `components/Pills.jsx`) — next to a
+  word's title on its card, or inline in the filter bar — rather than as
+  regular pills. A person's own tags stay ordinary `TagFilterPill`s/chips, but
+  are ranked by how many words carry them (`rankTagsByUsage`) and capped
+  (6 in a filter bar, 2 per word card), with a `ShowMoreTagsButton` ("+N") to
+  reveal the rest. `WordsList.jsx`'s filter bar and per-word chips, and
+  Practice's `TagScopeBar`, all follow this same pattern — keep them
+  consistent if it changes again.
 
 - **Serbian script**: stored in whichever script was typed; the *other*
   script is derived on the fly via `cyrillicToLatin`/`latinToCyrillic`
