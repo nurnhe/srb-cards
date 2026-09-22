@@ -24,7 +24,7 @@ async function withApp(fakeSupabase, userId, run) {
 }
 
 describe('GET /api/groups', () => {
-  it('returns groups with their full membership', async () => {
+  it('returns groups with their full membership, replacing each member\'s raw user id with a "mine" boolean', async () => {
     const groupRows = [{ id: 'g1', name: 'Друштво', invite_code: 'ABC', created_by: 'me', created_at: 't' }];
     const memberRows = [{ group_id: 'g1', user_id: 'me', joined_at: 't' }, { group_id: 'g1', user_id: 'them', joined_at: 't2' }];
     let inArg = null;
@@ -38,7 +38,11 @@ describe('GET /api/groups', () => {
     };
     const body = await withApp(fakeSupabase, 'me', async (base) => (await fetch(base)).json());
     expect(body.groups).toEqual(groupRows);
-    expect(body.members).toEqual(memberRows);
+    expect(body.members).toEqual([
+      { group_id: 'g1', joined_at: 't', mine: true },
+      { group_id: 'g1', joined_at: 't2', mine: false },
+    ]);
+    expect(body.members.some((m) => 'user_id' in m)).toBe(false);
     expect(inArg).toEqual(['g1']);
   });
 

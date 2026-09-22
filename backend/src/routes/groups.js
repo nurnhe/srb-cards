@@ -24,7 +24,10 @@ router.get(
         .select('group_id, user_id, joined_at')
         .in('group_id', groupIds);
       if (membersError) return fail(res, 'GET /api/groups', membersError);
-      members = data || [];
+      // Same reasoning as attachOwnership in shape.js: a groupmate's raw
+      // user id never needs to reach the browser, only whether a given row
+      // is the caller's own membership.
+      members = (data || []).map(({ user_id, ...rest }) => ({ ...rest, mine: user_id === req.userId }));
     }
     res.json({ groups: groups || [], members });
   })

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Plus, Copy, Check, LogOut, Users } from 'lucide-react';
 import { FONT_MONO, FONT_DISPLAY, FONT_BODY } from './theme';
+import { getGroups } from './api';
 
 const INPUT_STYLE = {
   fontFamily: FONT_DISPLAY,
@@ -153,7 +154,27 @@ function InviteCode({ code }) {
   );
 }
 
+// GET /api/vocabulary's `groups` (the prop this component receives) is
+// deliberately minimal — {id, name}, just enough for the scope-selector
+// pills used elsewhere — so invite codes are fetched separately here via
+// GET /api/groups, the one place that needs the fuller detail. Re-fetched
+// whenever the number of groups changes (create/join/leave), not just once
+// on mount, so a code appears promptly after creating/joining rather than
+// only surviving until the next full page reload overwrites the minimal list.
 export function Groups({ groups, onCreate, onJoin, onLeave }) {
+  const [details, setDetails] = useState({}); // group id -> { invite_code, ... }
+
+  useEffect(() => {
+    let cancelled = false;
+    getGroups().then(({ data }) => {
+      if (cancelled || !data) return;
+      setDetails(Object.fromEntries((data.groups || []).map((g) => [g.id, g])));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [groups.length]);
+
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-2xl px-6 py-7 flex flex-col gap-5" style={{ background: '#1B2440', border: '1px solid #2A3355' }}>
@@ -182,7 +203,7 @@ export function Groups({ groups, onCreate, onJoin, onLeave }) {
                 <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>{g.name}</span>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {g.invite_code && <InviteCode code={g.invite_code} />}
+                {details[g.id]?.invite_code && <InviteCode code={details[g.id].invite_code} />}
                 <button
                   type="button"
                   onClick={() => onLeave(g.id)}
