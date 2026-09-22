@@ -104,6 +104,15 @@ it does not exist or starts it if it does. Other flags:
   editing `.env`**, since Docker only reads it when the container is created.
 - `--stop` — stop it.
 
+The backend runs under `node --watch` so it restarts itself on a file change —
+usually. Docker's file-sharing on macOS occasionally drops that change
+notification, most often for a **newly created file**, leaving the backend
+serving old code indefinitely with nothing in the logs to say so (confirmed
+once: a change sat unpicked-up for 21 hours). If a backend change doesn't
+seem to be taking effect, don't assume the code is wrong — check
+`docker logs srb-cards-dev` for a recent "Restarting" / "API listening" line,
+and if there isn't one, `./run_dev.sh --recreate` to force a fresh start.
+
 `.env` is gitignored. Write values **without quotes** — Docker reads the file
 itself and treats quotes as part of the value.
 
