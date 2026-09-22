@@ -33,7 +33,6 @@ import {
   posAbbreviation,
   partOfSpeechTagIds,
   rankTagsByUsage,
-  planScriptNormalization,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -1114,60 +1113,3 @@ describe('rankTagsByUsage', () => {
   });
 });
 
-describe('planScriptNormalization', () => {
-  const w = (id, sr, ru = 'x') => ({ id, sr, ru });
-
-  it('leaves words already in Latin alone', () => {
-    expect(planScriptNormalization([w('a', 'raditi'), w('b', 'voda')])).toEqual([]);
-  });
-
-  it('plans a Latin conversion for every Cyrillic word, one step each', () => {
-    const plan = planScriptNormalization([w('a', 'радити'), w('b', 'voda'), w('c', 'вода не иста')]);
-    expect(plan).toHaveLength(2);
-    expect(plan[0]).toMatchObject({ target: 'raditi', collidesWith: null });
-    expect(plan[0].word.id).toBe('a');
-  });
-
-  it('skips (does not plan) a word whose Latin form already exists as a different word', () => {
-    const plan = planScriptNormalization([w('a', 'радити'), w('b', 'raditi')]);
-    expect(plan).toHaveLength(1);
-    expect(plan[0].target).toBeNull();
-    expect(plan[0].collidesWith.id).toBe('b');
-  });
-
-  it('does not treat a word as colliding with its own already-Cyrillic self', () => {
-    const plan = planScriptNormalization([w('a', 'радити')]);
-    expect(plan[0].collidesWith).toBeNull();
-    expect(plan[0].target).toBe('raditi');
-  });
-
-  it('two Cyrillic spellings that differ only in case are already duplicates of each other before conversion, and both are skipped', () => {
-    // Case is folded by normalize()/findDuplicateWord regardless of script,
-    // so "радити" and "РАДИТИ" collide with each other even before either is
-    // converted — conversion can't introduce a same-Latin-spelling collision
-    // that wasn't already there, since two genuinely different Cyrillic
-    // spellings always convert to two different Latin ones.
-    const plan = planScriptNormalization([w('a', 'радити'), w('b', 'РАДИТИ')]);
-    expect(plan).toHaveLength(2);
-    expect(plan[0]).toMatchObject({ target: null, collidesWith: { id: 'b' } });
-    expect(plan[1]).toMatchObject({ target: null, collidesWith: { id: 'a' } });
-  });
-
-  it('does not let a collision with an existing Latin word block later Cyrillic words that have no such conflict', () => {
-    const plan = planScriptNormalization([w('a', 'радити'), w('b', 'raditi'), w('c', 'вода')]);
-    expect(plan).toHaveLength(2);
-    const waterStep = plan.find((s) => s.word.id === 'c');
-    expect(waterStep).toMatchObject({ target: 'voda', collidesWith: null });
-  });
-
-  it('detects a collision across scripts (the other-script match), not just an exact string match', () => {
-    // "posao" already exists in Latin; "посао" would convert to the same word.
-    const plan = planScriptNormalization([w('a', 'посао'), w('b', 'posao')]);
-    expect(plan).toHaveLength(1);
-    expect(plan[0].collidesWith.id).toBe('b');
-  });
-
-  it('returns an empty plan for no words', () => {
-    expect(planScriptNormalization([])).toEqual([]);
-  });
-});

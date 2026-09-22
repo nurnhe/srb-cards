@@ -650,32 +650,3 @@ export function rankTagsByUsage(tagIds, words) {
   return [...tagIds].sort((a, b) => counts.get(b) - counts.get(a));
 }
 
-// Works out which Cyrillic words need converting to Latin, and which of those
-// would collide with a word that already exists — so the caller can skip and
-// report those instead of silently creating a duplicate (possible because
-// duplicate detection has only ever run in the browser, never enforced by the
-// database — two rows can already exist for the same word, once per script,
-// from before that check existed). Pure — does no saving itself; the caller
-// applies each step and is expected to skip any with `collidesWith` set.
-//
-// Checked one word at a time, in order, against a running view of the
-// vocabulary that already reflects earlier steps' *planned* conversions —
-// so two Cyrillic words that would both convert to the same Latin spelling
-// are caught colliding with each other too, not just against words already
-// in Latin.
-export function planScriptNormalization(words) {
-  const todo = words.filter((w) => isCyrillic(w.sr));
-  const plan = [];
-  let known = words;
-  for (const word of todo) {
-    const target = cyrillicToLatin(word.sr);
-    const collidesWith = findDuplicateWord(target, known.filter((w) => w.id !== word.id));
-    if (collidesWith) {
-      plan.push({ word, target: null, collidesWith });
-    } else {
-      plan.push({ word, target, collidesWith: null });
-      known = known.map((w) => (w.id === word.id ? { ...w, sr: target } : w));
-    }
-  }
-  return plan;
-}
