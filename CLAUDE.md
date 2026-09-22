@@ -177,9 +177,17 @@ Conventions worth keeping:
   wildcards there) — see `ensureTag`.
 - Link and tag writes are idempotent upserts on purpose — re-importing a backup
   re-links pairs that already exist and that has to be a no-op.
-- Supabase errors are logged server-side with the route name. The UI only has
-  one generic "не могу да сачувам" banner, so **the server log is the only real
-  diagnostic** — check `docker logs srb-cards-dev` when something will not save.
+- Supabase errors are logged server-side with the route name — the server log
+  is still the real diagnostic (`docker logs srb-cards-dev`). The banner
+  itself, though, says what actually failed rather than one generic line:
+  `storageError` in `App.jsx` holds a message (or `null`), set to something
+  specific by whichever call failed (add/edit/delete a word, link/unlink,
+  tag/untag, load). A step that makes several requests in one go
+  (`addWordWithRelated`, `importWords`, `detectPartsOfSpeech`) counts its own
+  failures and sets one summary message at the end, since a later success in
+  the same batch would otherwise silently clear an earlier failure's message
+  before it was ever seen — `linkWords`/`tagWord` return whether they actually
+  saved so a caller doing several in a row can tell.
 - Import (`importWords` in `App.jsx`) still runs its three passes in the
   browser, calling the API per word. Fine because imports are rare; a bulk
   `POST /api/import` is the obvious follow-up if it ever feels slow.
