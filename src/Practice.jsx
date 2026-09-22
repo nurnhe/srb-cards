@@ -13,7 +13,7 @@ import {
   posAbbreviation,
   rankTagsByUsage,
 } from './logic';
-import { DirectionPill, TagFilterPill, PosBadge, TagRowDivider, ShowMoreTagsButton } from './components/Pills';
+import { DirectionPill, TagFilterPill, PosBadge, ShowMoreTagsButton } from './components/Pills';
 import { PronounceButton } from './components/PronounceButton';
 import { IpaText } from './components/IpaText';
 
@@ -519,20 +519,25 @@ function TagScopeBar({ tags, words, tagFilter, onChange }) {
   const shownCustomTags = expanded ? rankedCustomTags : rankedCustomTags.slice(0, TAG_SCOPE_FILTER_CAP);
 
   return (
-    <div className="flex flex-wrap justify-center items-center gap-1.5 mb-4">
-      <TagFilterPill active={tagFilter.size === 0} label="Све теме" onClick={() => onChange(new Set())} />
-      {posTags.map((t) => (
-        <PosBadge key={t.id} label={posAbbreviation(t.name)} active={tagFilter.has(t.id)} onClick={() => toggle(t.id)} />
-      ))}
-      {posTags.length > 0 && customTags.length > 0 && <TagRowDivider />}
-      {shownCustomTags.map((t) => (
-        <TagFilterPill key={t.id} active={tagFilter.has(t.id)} label={t.name} onClick={() => toggle(t.id)} />
-      ))}
-      {!expanded && rankedCustomTags.length > TAG_SCOPE_FILTER_CAP && (
-        <ShowMoreTagsButton
-          count={rankedCustomTags.length - TAG_SCOPE_FILTER_CAP}
-          onClick={() => setExpanded(true)}
-        />
+    <div className="mb-4">
+      <div className="flex flex-wrap justify-center items-center gap-1.5">
+        <TagFilterPill active={tagFilter.size === 0} label="Све теме" onClick={() => onChange(new Set())} />
+        {posTags.map((t) => (
+          <PosBadge key={t.id} label={posAbbreviation(t.name)} active={tagFilter.has(t.id)} onClick={() => toggle(t.id)} />
+        ))}
+      </div>
+      {customTags.length > 0 && (
+        <div className="flex flex-wrap justify-center items-center gap-1.5 mt-1.5">
+          {shownCustomTags.map((t) => (
+            <TagFilterPill key={t.id} active={tagFilter.has(t.id)} label={t.name} onClick={() => toggle(t.id)} />
+          ))}
+          {!expanded && rankedCustomTags.length > TAG_SCOPE_FILTER_CAP && (
+            <ShowMoreTagsButton
+              count={rankedCustomTags.length - TAG_SCOPE_FILTER_CAP}
+              onClick={() => setExpanded(true)}
+            />
+          )}
+        </div>
       )}
     </div>
   );

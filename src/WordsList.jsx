@@ -17,7 +17,7 @@ import {
   posAbbreviation,
   rankTagsByUsage,
 } from './logic';
-import { SortPill, TagFilterPill, PosBadge, TagRowDivider, ShowMoreTagsButton } from './components/Pills';
+import { SortPill, TagFilterPill, PosBadge, ShowMoreTagsButton } from './components/Pills';
 import { VariantsEditor } from './components/VariantsEditor';
 import { PronounceButton } from './components/PronounceButton';
 import { IpaText } from './components/IpaText';
@@ -424,29 +424,34 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
       />
 
       {tags && tags.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 mb-1" style={{ paddingLeft: 4 }}>
-          <TagFilterPill
-            active={activeTagFilter.size === 0}
-            label="Све"
-            onClick={() => setActiveTagFilter(new Set())}
-          />
-          {posTags.map((t) => (
-            <PosBadge
-              key={t.id}
-              label={posAbbreviation(t.name)}
-              active={activeTagFilter.has(t.id)}
-              onClick={() => toggleTagFilter(t.id)}
+        <div className="mb-1" style={{ paddingLeft: 4 }}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <TagFilterPill
+              active={activeTagFilter.size === 0}
+              label="Све"
+              onClick={() => setActiveTagFilter(new Set())}
             />
-          ))}
-          {posTags.length > 0 && customTags.length > 0 && <TagRowDivider />}
-          {(tagFilterExpanded ? rankedCustomTags : rankedCustomTags.slice(0, CUSTOM_TAG_FILTER_CAP)).map((t) => (
-            <TagFilterPill key={t.id} active={activeTagFilter.has(t.id)} label={t.name} onClick={() => toggleTagFilter(t.id)} />
-          ))}
-          {!tagFilterExpanded && rankedCustomTags.length > CUSTOM_TAG_FILTER_CAP && (
-            <ShowMoreTagsButton
-              count={rankedCustomTags.length - CUSTOM_TAG_FILTER_CAP}
-              onClick={() => setTagFilterExpanded(true)}
-            />
+            {posTags.map((t) => (
+              <PosBadge
+                key={t.id}
+                label={posAbbreviation(t.name)}
+                active={activeTagFilter.has(t.id)}
+                onClick={() => toggleTagFilter(t.id)}
+              />
+            ))}
+          </div>
+          {customTags.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+              {(tagFilterExpanded ? rankedCustomTags : rankedCustomTags.slice(0, CUSTOM_TAG_FILTER_CAP)).map((t) => (
+                <TagFilterPill key={t.id} active={activeTagFilter.has(t.id)} label={t.name} onClick={() => toggleTagFilter(t.id)} />
+              ))}
+              {!tagFilterExpanded && rankedCustomTags.length > CUSTOM_TAG_FILTER_CAP && (
+                <ShowMoreTagsButton
+                  count={rankedCustomTags.length - CUSTOM_TAG_FILTER_CAP}
+                  onClick={() => setTagFilterExpanded(true)}
+                />
+              )}
+            </div>
           )}
         </div>
       )}

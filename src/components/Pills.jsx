@@ -96,12 +96,6 @@ export function PosBadge({ label, active, onClick, onRemove }) {
   );
 }
 
-// A thin vertical rule separating part-of-speech badges from ordinary tags in
-// the same row.
-export function TagRowDivider() {
-  return <span style={{ width: 1, alignSelf: 'stretch', background: '#2A3355', margin: '0 2px' }} aria-hidden="true" />;
-}
-
 // "+N" — reveals the rest of a capped list of tags. Styled as a small dashed
 // chip so it reads as part of the row instead of a separate stray link.
 export function ShowMoreTagsButton({ count, onClick, label }) {

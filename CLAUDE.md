@@ -306,13 +306,14 @@ the test database) in the same change.
   a person's own tags: `partOfSpeechTagIds(tags)` (`logic.js`) picks out which
   tag ids are part-of-speech; those render as small abbreviated `PosBadge`s
   (`гл.`, `им.`, ... — `posAbbreviation`, `components/Pills.jsx`) — next to a
-  word's title on its card, or inline in the filter bar — rather than as
-  regular pills. A person's own tags stay ordinary `TagFilterPill`s/chips, but
-  are ranked by how many words carry them (`rankTagsByUsage`) and capped
-  (6 in a filter bar, 2 per word card), with a `ShowMoreTagsButton` ("+N") to
-  reveal the rest. `WordsList.jsx`'s filter bar and per-word chips, and
-  Practice's `TagScopeBar`, all follow this same pattern — keep them
-  consistent if it changes again.
+  word's title on its card, or on their own row above the filter bar — rather
+  than as regular pills. A person's own tags stay ordinary
+  `TagFilterPill`s/chips on the row below (or, per word, below the title),
+  ranked by how many words carry them (`rankTagsByUsage`) and capped (6 in a
+  filter bar, 2 per word card), with a `ShowMoreTagsButton` ("+N") to reveal
+  the rest. `WordsList.jsx`'s filter bar and per-word chips, and Practice's
+  `TagScopeBar`, all follow this same two-row pattern — keep them consistent
+  if it changes again.
 
 - **Serbian script**: stored in whichever script was typed; the *other*
   script is derived on the fly via `cyrillicToLatin`/`latinToCyrillic`
