@@ -13,7 +13,7 @@ import { TagFilterPill } from './components/Pills';
 
 /* ---------------- ADD WORD ---------------- */
 
-export function AddWord({ onAdd, goToList, words, tags }) {
+export function AddWord({ onAdd, goToList, words, tags, groups }) {
   const [sr, setSr] = useState('');
   const [ruVariants, setRuVariants] = useState([]);
   // Bumped on every successful submit so VariantsEditor below remounts with
@@ -35,6 +35,10 @@ export function AddWord({ onAdd, goToList, words, tags }) {
   const [relatedSelections, setRelatedSelections] = useState({});
   const [selectedTagNames, setSelectedTagNames] = useState([]);
   const [tagQuery, setTagQuery] = useState('');
+  // Groups the main word (not any related words added alongside it) will be
+  // shared to — a plain array of ids, no per-related-word breakdown the way
+  // tagExclusions gives tags, since there's no equivalent need here.
+  const [selectedGroupIds, setSelectedGroupIds] = useState([]);
   // Per-tag: which words (by sr, or '__main__' for the word being added)
   // are explicitly excluded from that specific tag — everything not in a
   // tag's set is included by default, so each tag applies to the whole
@@ -244,7 +248,7 @@ export function AddWord({ onAdd, goToList, words, tags }) {
     setSaveFailed(false);
     let saved = false;
     try {
-      saved = await onAdd(sr, ruVariants.join(', '), example, relatedToAdd, mainTagNames);
+      saved = await onAdd(sr, ruVariants.join(', '), example, relatedToAdd, mainTagNames, selectedGroupIds);
     } finally {
       setSaving(false);
     }
@@ -268,6 +272,7 @@ export function AddWord({ onAdd, goToList, words, tags }) {
     setSelectedTagNames([]);
     setTagQuery('');
     setTagExclusions({});
+    setSelectedGroupIds([]);
     setInflectionTables(null);
     setInflectionState('idle');
     setJustAdded(true);
@@ -728,6 +733,28 @@ export function AddWord({ onAdd, goToList, words, tags }) {
         )}
       </div>
       <div style={{ marginBottom: 20 }} />
+
+      {groups && groups.length > 0 && (
+        <>
+          <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
+            ДЕЛИ СА ГРУПАМА (НЕОБАВЕЗНО)
+          </label>
+          <div className="flex flex-wrap gap-1.5 mt-1.5" style={{ marginBottom: 20 }}>
+            {groups.map((g) => (
+              <TagFilterPill
+                key={g.id}
+                active={selectedGroupIds.includes(g.id)}
+                label={g.name}
+                onClick={() =>
+                  setSelectedGroupIds((prev) =>
+                    prev.includes(g.id) ? prev.filter((id) => id !== g.id) : [...prev, g.id]
+                  )
+                }
+              />
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="flex items-center justify-between mb-1.5">
         <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>

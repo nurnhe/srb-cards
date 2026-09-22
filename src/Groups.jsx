@@ -1,0 +1,203 @@
+import React, { useState } from 'react';
+import { Plus, Copy, Check, LogOut, Users } from 'lucide-react';
+import { FONT_MONO, FONT_DISPLAY, FONT_BODY } from './theme';
+
+const INPUT_STYLE = {
+  fontFamily: FONT_DISPLAY,
+  fontSize: '1rem',
+  background: '#F5F1E8',
+  color: '#1C2333',
+  border: '1.5px solid transparent',
+};
+
+// Same submit-handler shape as Auth.jsx's LoginGate/NewPasswordGate: guard
+// against a double-submit, clear the error on every keystroke, try/catch/
+// finally so `saving` never gets stuck true if something throws unexpectedly.
+function CreateGroupForm({ onCreate }) {
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await onCreate(name.trim());
+      if (!created) {
+        setError('Не могу да направим групу — покушај поново.');
+        return;
+      }
+      setName('');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-2">
+      <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
+        НАПРАВИ НОВУ ГРУПУ
+      </label>
+      <div className="flex items-center gap-2">
+        <input
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            setError(null);
+          }}
+          placeholder="нпр. Српски четвртком"
+          autoComplete="off"
+          className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
+          style={INPUT_STYLE}
+        />
+        <button
+          type="submit"
+          disabled={!name.trim() || saving}
+          className="rounded-lg px-4 py-2.5 text-sm font-semibold flex items-center gap-1.5 shrink-0"
+          style={{
+            fontFamily: FONT_BODY,
+            background: name.trim() ? '#C41E3A' : '#2A3355',
+            color: name.trim() ? '#F5F1E8' : '#5C6690',
+          }}
+        >
+          <Plus size={16} /> Направи
+        </button>
+      </div>
+      {error && <p style={{ color: '#E28B95', fontSize: '0.8rem' }}>{error}</p>}
+    </form>
+  );
+}
+
+function JoinGroupForm({ onJoin }) {
+  const [code, setCode] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!code.trim() || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const joined = await onJoin(code.trim());
+      if (!joined) {
+        setError('Није пронађена група са тим кодом.');
+        return;
+      }
+      setCode('');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-2">
+      <label style={{ color: '#8892AE', fontSize: '0.8rem', fontFamily: FONT_MONO, letterSpacing: 0.5 }}>
+        ПРИДРУЖИ СЕ ПОМОЋУ КОДА
+      </label>
+      <div className="flex items-center gap-2">
+        <input
+          value={code}
+          onChange={(e) => {
+            setCode(e.target.value);
+            setError(null);
+          }}
+          placeholder="нпр. AB12CD34"
+          autoComplete="off"
+          className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
+          style={{ ...INPUT_STYLE, fontFamily: FONT_MONO, letterSpacing: 1 }}
+        />
+        <button
+          type="submit"
+          disabled={!code.trim() || saving}
+          className="rounded-lg px-4 py-2.5 text-sm font-semibold shrink-0"
+          style={{
+            fontFamily: FONT_BODY,
+            background: code.trim() ? '#3D8B5F' : '#2A3355',
+            color: code.trim() ? '#F5F1E8' : '#5C6690',
+          }}
+        >
+          Придружи се
+        </button>
+      </div>
+      {error && <p style={{ color: '#E28B95', fontSize: '0.8rem' }}>{error}</p>}
+    </form>
+  );
+}
+
+function InviteCode({ code }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      // Clipboard access can fail (no permission, insecure context) — the
+      // code is still shown in plain text, so nothing is actually lost.
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="inline-flex items-center gap-1.5 rounded-md px-2 py-1"
+      style={{ fontFamily: FONT_MONO, fontSize: '0.78rem', color: '#D4A54A', background: '#12192E', border: '1px solid #2A3355' }}
+      title="Копирај код за позивницу"
+    >
+      {code}
+      {copied ? <Check size={13} /> : <Copy size={13} />}
+    </button>
+  );
+}
+
+export function Groups({ groups, onCreate, onJoin, onLeave }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="rounded-2xl px-6 py-7 flex flex-col gap-5" style={{ background: '#1B2440', border: '1px solid #2A3355' }}>
+        <CreateGroupForm onCreate={onCreate} />
+        <div style={{ borderTop: '1px solid #2A3355' }} />
+        <JoinGroupForm onJoin={onJoin} />
+      </div>
+
+      {groups.length === 0 ? (
+        <div className="text-center rounded-2xl py-16 px-6" style={{ background: '#1B2440', border: '1px solid #2A3355' }}>
+          <p style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1.15rem' }}>Још ниси ни у једној групи</p>
+          <p style={{ color: '#8892AE', fontSize: '0.9rem', marginTop: 8 }}>
+            Направи групу или се придружи постојећој помоћу кода.
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {groups.map((g) => (
+            <div
+              key={g.id}
+              className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
+              style={{ background: '#1B2440', border: '1px solid #2A3355' }}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Users size={16} color="#8892AE" className="shrink-0" />
+                <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>{g.name}</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {g.invite_code && <InviteCode code={g.invite_code} />}
+                <button
+                  type="button"
+                  onClick={() => onLeave(g.id)}
+                  className="p-2 rounded-md"
+                  style={{ color: '#8892AE' }}
+                  aria-label={`Напусти групу ${g.name}`}
+                  title="Напусти групу"
+                >
+                  <LogOut size={15} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

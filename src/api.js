@@ -50,8 +50,8 @@ async function request(path, { method = 'GET', body } = {}) {
   }
 }
 
-// Words + links + tags in one request, already stitched together:
-// { words: [{ ..., relatedIds, tagIds }], tags: [{ id, name }] }
+// Words + links + tags + study groups in one request, already stitched
+// together: { words: [{ ..., relatedIds, tagIds, groupIds, mine }], tags: [{ id, name }], groups: [{ id, name }] }
 export const getVocabulary = () => request('/vocabulary');
 
 export const createWord = (sr, ru, example) =>
@@ -77,3 +77,20 @@ export const tagWord = (wordId, name) =>
 
 export const untagWord = (wordId, tagId) =>
   request(`/words/${wordId}/tags/${tagId}`, { method: 'DELETE' });
+
+// Study groups with joint dictionaries. getGroups() carries richer detail
+// (invite code, membership) than the minimal {id, name} list already in
+// getVocabulary()'s response — it's what the dedicated Groups screen uses.
+export const getGroups = () => request('/groups');
+
+export const createGroup = (name) => request('/groups', { method: 'POST', body: { name } });
+
+export const joinGroup = (code) => request('/groups/join', { method: 'POST', body: { code } });
+
+export const leaveGroup = (groupId) => request(`/groups/${groupId}/membership`, { method: 'DELETE' });
+
+export const shareWordToGroup = (wordId, groupId) =>
+  request(`/words/${wordId}/groups`, { method: 'POST', body: { groupId } });
+
+export const unshareWordFromGroup = (wordId, groupId) =>
+  request(`/words/${wordId}/groups/${groupId}`, { method: 'DELETE' });

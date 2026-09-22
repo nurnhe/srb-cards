@@ -9,6 +9,7 @@ const router = Router();
 router.param('id', (req, res, next, id) => (isValidId(id) ? next() : res.status(400).json({ error: 'invalid id' })));
 router.param('wordId', (req, res, next, id) => (isValidId(id) ? next() : res.status(400).json({ error: 'invalid id' })));
 router.param('tagId', (req, res, next, id) => (isValidId(id) ? next() : res.status(400).json({ error: 'invalid id' })));
+router.param('groupId', (req, res, next, id) => (isValidId(id) ? next() : res.status(400).json({ error: 'invalid id' })));
 
 router.post(
   '/',
@@ -27,7 +28,12 @@ router.post(
       .single();
     if (error || !data) return fail(res, 'POST /api/words', error);
 
-    res.status(201).json({ ...data, relatedIds: [], tagIds: [] });
+    // A word you just created is trivially yours — no query needed to know
+    // that. user_id itself is never sent to the client (see attachOwnership
+    // in shape.js) — nothing else in this app exposes one user's id to
+    // another, and there's no reason to start with this one.
+    const { user_id, ...rest } = data;
+    res.status(201).json({ ...rest, relatedIds: [], tagIds: [], groupIds: [], correct_count: 0, wrong_count: 0, mine: true });
   })
 );
 
@@ -55,14 +61,20 @@ router.patch(
     if (error) return fail(res, 'PATCH /api/words/:id', error);
     if (!data) return fail(res, 'PATCH /api/words/:id', new Error('Word not found'), 404);
 
-    res.json(data);
+    // Ownership doesn't change on edit — strip the raw id the same way POST
+    // does rather than send it, since the frontend already knows `mine` from
+    // the word it's patching and doesn't need it repeated here.
+    const { user_id, ...rest } = data;
+    res.json(rest);
   })
 );
 
-// Records a practice attempt via an atomic increment (increment_word_answer,
+// Records a practice attempt via an atomic increment (increment_word_progress,
 // a Postgres function — see the DB schema notes) rather than a read-then-write
 // from here, which could lose an increment between two rapid requests for the
-// same word (a double-tap, or a client retry after a flaky response).
+// same word (a double-tap, or a client retry after a flaky response). Progress
+// is per-caller (word_progress), not per-word, so two people sharing a word
+// each keep their own counts.
 router.post(
   '/:id/answer',
   route(async (req, res) => {
@@ -72,7 +84,7 @@ router.post(
     }
     const field = correct ? 'correct_count' : 'wrong_count';
 
-    const { data, error } = await req.supabase.rpc('increment_word_answer', {
+    const { data, error } = await req.supabase.rpc('increment_word_progress', {
       p_word_id: req.params.id,
       p_field: field,
     });
@@ -127,6 +139,36 @@ router.delete(
       .eq('word_id', req.params.wordId)
       .eq('tag_id', req.params.tagId);
     if (error) return fail(res, 'DELETE /api/words/:wordId/tags/:tagId', error);
+    res.status(204).end();
+  })
+);
+
+// Shares a word into a group (or re-shares — upsert). RLS on word_groups
+// (caller must belong to the group AND be able to see the word already) does
+// the real authorization; this just performs the write.
+router.post(
+  '/:id/groups',
+  route(async (req, res) => {
+    if (!isValidId(req.body?.groupId)) {
+      return res.status(400).json({ error: 'groupId is required' });
+    }
+    const { error } = await req.supabase
+      .from('word_groups')
+      .upsert([{ word_id: req.params.id, group_id: req.body.groupId }], { onConflict: 'word_id,group_id' });
+    if (error) return fail(res, 'POST /api/words/:id/groups', error);
+    res.json({ groupId: req.body.groupId });
+  })
+);
+
+router.delete(
+  '/:wordId/groups/:groupId',
+  route(async (req, res) => {
+    const { error } = await req.supabase
+      .from('word_groups')
+      .delete()
+      .eq('word_id', req.params.wordId)
+      .eq('group_id', req.params.groupId);
+    if (error) return fail(res, 'DELETE /api/words/:wordId/groups/:groupId', error);
     res.status(204).end();
   })
 );

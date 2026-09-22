@@ -16,8 +16,10 @@ import {
   partOfSpeechTagIds,
   posAbbreviation,
   rankTagsByUsage,
+  scopeWords,
 } from './logic';
 import { SortPill, TagFilterPill, PosBadge, ShowMoreTagsButton } from './components/Pills';
+import { DictScopeBar } from './components/DictScopeBar';
 import { VariantsEditor } from './components/VariantsEditor';
 import { PronounceButton } from './components/PronounceButton';
 import { IpaText } from './components/IpaText';
@@ -56,7 +58,8 @@ function TagAccuracyPanel({ words, tags }) {
   );
 }
 
-export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, onUntag, onImport, onDetectPartsOfSpeech }) {
+export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onUnlink, onTag, onUntag, onImport, onDetectPartsOfSpeech }) {
+  const [scope, setScope] = useState('all'); // 'all' | 'mine' | a group id
   const [editingId, setEditingId] = useState(null);
   const [editSr, setEditSr] = useState('');
   const [editRuVariants, setEditRuVariants] = useState([]);
@@ -168,7 +171,11 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
     return (w.wrong_count || 0) / total;
   };
 
-  const sorted = [...words].sort((a, b) => {
+  // Narrows to the selected dictionary (everything / just mine / a specific
+  // group) before anything else — sorting, tag filtering, search — applies.
+  const scoped = scopeWords(words, scope);
+
+  const sorted = [...scoped].sort((a, b) => {
     if (sortMode === 'hardest') {
       const diff = errorRate(b) - errorRate(a);
       if (diff !== 0) return diff;
@@ -318,7 +325,7 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
             letterSpacing: 1,
           }}
         >
-          {words.length} {words.length === 1 ? 'РЕЧ' : 'РЕЧИ'}
+          {scoped.length} {scoped.length === 1 ? 'РЕЧ' : 'РЕЧИ'}
         </div>
         <div className="flex gap-1">
           <SortPill active={sortMode === 'alpha'} label="А–Ш" onClick={() => setSortMode('alpha')} />
@@ -422,6 +429,12 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
           border: '1.5px solid transparent',
         }}
       />
+
+      {groups && groups.length > 0 && (
+        <div className="mb-1.5" style={{ paddingLeft: 4 }}>
+          <DictScopeBar groups={groups} scope={scope} onChange={setScope} />
+        </div>
+      )}
 
       {tags && tags.length > 0 && (
         <div className="mb-1" style={{ paddingLeft: 4 }}>

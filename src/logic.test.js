@@ -33,6 +33,7 @@ import {
   posAbbreviation,
   partOfSpeechTagIds,
   rankTagsByUsage,
+  scopeWords,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -1110,6 +1111,34 @@ describe('rankTagsByUsage', () => {
   it('copes with no words and with tags nobody uses', () => {
     expect(rankTagsByUsage(['a', 'b'], [])).toEqual(['a', 'b']);
     expect(rankTagsByUsage([], words([['a']]))).toEqual([]);
+  });
+});
+
+describe('scopeWords', () => {
+  const words = [
+    { id: 'w1', mine: true, groupIds: [] },
+    { id: 'w2', mine: false, groupIds: ['g1'] },
+    { id: 'w3', mine: true, groupIds: ['g1', 'g2'] },
+  ];
+
+  it('returns everything for "all" or no scope', () => {
+    expect(scopeWords(words, 'all')).toEqual(words);
+    expect(scopeWords(words, undefined)).toEqual(words);
+    expect(scopeWords(words, null)).toEqual(words);
+  });
+
+  it('filters to only the caller\'s own words for "mine"', () => {
+    expect(scopeWords(words, 'mine')).toEqual([words[0], words[2]]);
+  });
+
+  it('filters to a specific group\'s words, including one that is also mine', () => {
+    expect(scopeWords(words, 'g1')).toEqual([words[1], words[2]]);
+    expect(scopeWords(words, 'g2')).toEqual([words[2]]);
+  });
+
+  it('copes with an empty or missing word list', () => {
+    expect(scopeWords([], 'mine')).toEqual([]);
+    expect(scopeWords(undefined, 'all')).toEqual([]);
   });
 });
 

@@ -54,7 +54,11 @@ export function cleanWordFields({ sr, ru, example }) {
   };
 }
 
-export const WORD_COLUMNS = 'id, sr, ru, example, correct_count, wrong_count';
+// user_id is selected for server-side use only (attachOwnership in shape.js
+// turns it into a `mine` boolean before a word ever reaches the client — see
+// that file's comment for why). correct_count/wrong_count no longer live on
+// this table; they come from word_progress (see attachGroupsAndProgress).
+export const WORD_COLUMNS = 'id, sr, ru, example, user_id';
 
 // Validates a route param that's expected to be a Postgres uuid before it
 // ever reaches a query — an malformed id (a truncated URL, a stale link)

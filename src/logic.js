@@ -650,3 +650,15 @@ export function rankTagsByUsage(tagIds, words) {
   return [...tagIds].sort((a, b) => counts.get(b) - counts.get(a));
 }
 
+// Narrows a word list to a study-groups "scope" before any tag filter
+// applies: 'all' (or falsy) is everyone visible to the caller (own words plus
+// anything shared with them), 'mine' is only words the caller themselves
+// added (w.mine, set server-side), and any other value is treated as a group
+// id, matched against w.groupIds. Used by both WordsList and Practice so the
+// two screens' scope selectors behave identically.
+export function scopeWords(words, scope) {
+  if (!scope || scope === 'all') return words || [];
+  if (scope === 'mine') return (words || []).filter((w) => w.mine);
+  return (words || []).filter((w) => (w.groupIds || []).includes(scope));
+}
+

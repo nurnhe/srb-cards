@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import vocabulary from './routes/vocabulary.js';
 import words from './routes/words.js';
 import links from './routes/links.js';
+import groups from './routes/groups.js';
 import { requireAuth } from './auth.js';
 
 const app = express();
@@ -24,6 +25,7 @@ app.get('/api/config', (req, res) => {
 app.use('/api/vocabulary', requireAuth, vocabulary);
 app.use('/api/words', requireAuth, words);
 app.use('/api/links', requireAuth, links);
+app.use('/api/groups', requireAuth, groups);
 
 // In the release image the built site sits next to the backend and is served by
 // this same process, so the site and the API share one origin — which is why the
