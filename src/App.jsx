@@ -24,7 +24,10 @@ export default function App() {
   const [words, setWords] = useState([]);
   const [tags, setTags] = useState([]);
   const [ready, setReady] = useState(false);
-  const [storageError, setStorageError] = useState(false);
+  // null when there's nothing to show; otherwise the specific message to
+  // display — replaces a plain true/false flag so a failure says what
+  // actually went wrong instead of one generic line every time.
+  const [storageError, setStorageError] = useState(null);
   const [tab, setTab] = useState('practice');
   // Derived from Supabase's own session state rather than a synchronous
   // localStorage check — a session can't be confirmed valid without asking
@@ -83,14 +86,14 @@ export default function App() {
     // and tagIds onto each word.
     const { data, error } = await api.getVocabulary();
     if (error || !data) {
-      setStorageError(true);
+      setStorageError('Не могу да учитам речи. Покушајте поново.');
       // api.js already called supabase.auth.signOut() for a 401 before
       // resolving with this same "Unauthorized" error, which will flip
       // `authed` to false via the onAuthStateChange listener — tell the
       // caller so it doesn't flip the app to "ready" while that's pending.
       return { unauthorized: error?.message === 'Unauthorized' };
     }
-    setStorageError(false);
+    setStorageError(null);
     setTags(data.tags || []);
     setWords(data.words || []);
     return { unauthorized: false };
@@ -111,10 +114,10 @@ export default function App() {
   const addWord = useCallback(async (sr, ru, example) => {
     const { data, error } = await api.createWord(sr, ru, example);
     if (error || !data) {
-      setStorageError(true);
+      setStorageError('Не могу да сачувам реч.');
       return null;
     }
-    setStorageError(false);
+    setStorageError(null);
     setWords((prev) => [...prev, data]);
     return data;
   }, []);
@@ -122,10 +125,10 @@ export default function App() {
   const updateWord = useCallback(async (id, sr, ru, example) => {
     const { data, error } = await api.updateWord(id, sr, ru, example);
     if (error || !data) {
-      setStorageError(true);
+      setStorageError('Не могу да сачувам измене.');
       return null;
     }
-    setStorageError(false);
+    setStorageError(null);
     // Patch from the row the server saved — it is what lowercases sr/ru.
     setWords((prev) => prev.map((w) => (w.id === id ? { ...w, ...data } : w)));
     return data;
@@ -142,7 +145,7 @@ export default function App() {
     const { data, error } = await api.recordAnswer(id, isCorrect);
     if (error || !data) {
       console.error('Failed to save answer stats:', error);
-      setStorageError(true);
+      setStorageError('Не могу да сачувам одговор.');
       // Nothing was actually saved — undo the optimistic bump so the local
       // count doesn't permanently overstate what's in the database.
       setWords((prev) =>
@@ -150,17 +153,17 @@ export default function App() {
       );
       return;
     }
-    setStorageError(false);
+    setStorageError(null);
     setWords((prev) => prev.map((w) => (w.id === id ? { ...w, ...data } : w)));
   }, []);
 
   const deleteWord = useCallback(async (id) => {
     const { error } = await api.deleteWord(id);
     if (error) {
-      setStorageError(true);
+      setStorageError('Не могу да обришем реч.');
       return;
     }
-    setStorageError(false);
+    setStorageError(null);
     setWords((prev) =>
       prev
         .filter((w) => w.id !== id)
@@ -170,17 +173,17 @@ export default function App() {
 
   // Returns whether the link was actually saved, so a caller doing several
   // of these in a row (addWordWithRelated, importWords) can tell if any one
-  // of them failed — the global storageError flag alone can't, since a
+  // of them failed — the shared storageError message alone can't, since a
   // later success in the same batch would otherwise clear an earlier
-  // failure's flag before the user ever saw it.
+  // failure's message before the user ever saw it.
   const linkWords = useCallback(async (idA, idB) => {
     if (idA === idB) return true;
     const { error } = await api.linkWords(idA, idB);
     if (error) {
-      setStorageError(true);
+      setStorageError('Не могу да повежем речи.');
       return false;
     }
-    setStorageError(false);
+    setStorageError(null);
     setWords((prev) =>
       prev.map((w) => {
         if (w.id === idA && !w.relatedIds.includes(idB)) return { ...w, relatedIds: [...w.relatedIds, idB] };
@@ -194,10 +197,10 @@ export default function App() {
   const unlinkWords = useCallback(async (idA, idB) => {
     const { error } = await api.unlinkWords(idA, idB);
     if (error) {
-      setStorageError(true);
+      setStorageError('Не могу да уклоним везу.');
       return;
     }
-    setStorageError(false);
+    setStorageError(null);
     setWords((prev) =>
       prev.map((w) => {
         if (w.id === idA) return { ...w, relatedIds: w.relatedIds.filter((rid) => rid !== idB) };
@@ -214,10 +217,10 @@ export default function App() {
   const tagWord = useCallback(async (wordId, tagName) => {
     const { data, error } = await api.tagWord(wordId, tagName);
     if (error || !data?.tag) {
-      setStorageError(true);
+      setStorageError('Не могу да додам таг.');
       return false;
     }
-    setStorageError(false);
+    setStorageError(null);
     const { tag } = data;
     setTags((prev) =>
       prev.some((t) => t.id === tag.id)
@@ -256,6 +259,11 @@ export default function App() {
     async (onProgress) => {
       const todo = wordsNeedingPartOfSpeech(words, tags);
       const result = { total: todo.length, tagged: 0, notFound: [], stoppedEarly: false };
+      // tagWord sets its own message on failure and clears it on success — in
+      // a loop over many words, a later success would otherwise wipe out an
+      // earlier failure's message before it's ever seen. Count failures
+      // locally and set one summary message at the end instead.
+      let failedTags = 0;
       for (let i = 0; i < todo.length; i++) {
         onProgress(i, todo.length);
         try {
@@ -264,7 +272,12 @@ export default function App() {
             result.notFound.push(todo[i].sr);
           } else {
             let allSaved = true;
-            for (const name of names) if (!(await tagWord(todo[i].id, name))) allSaved = false;
+            for (const name of names) {
+              if (!(await tagWord(todo[i].id, name))) {
+                allSaved = false;
+                failedTags += 1;
+              }
+            }
             if (allSaved) result.tagged += 1;
           }
         } catch (err) {
@@ -274,6 +287,7 @@ export default function App() {
         await new Promise((resolve) => setTimeout(resolve, 150));
       }
       onProgress(todo.length, todo.length);
+      if (failedTags > 0) setStorageError(`Неке речи нису означене врстом (${failedTags}). Покушајте поново.`);
       return result;
     },
     [words, tags, tagWord]
@@ -306,6 +320,12 @@ export default function App() {
       const group = [mainWord];
       const created = [mainWord];
       const relatedWithTags = [];
+      // Counted rather than just noted, so a failure here can say what
+      // didn't save instead of the same generic line as every other failure
+      // — this step makes one request per related word, link and tag, so
+      // it's the one place in the app where several independent things can
+      // fail in a single add.
+      let failedRelatedWords = 0;
       for (const rel of relatedSelections || []) {
         const existing = findDuplicateWord(rel.sr, known);
         if (!existing && (!rel.ru || !rel.ru.trim())) continue;
@@ -317,28 +337,37 @@ export default function App() {
           }
           group.push(relatedWord);
           relatedWithTags.push({ word: relatedWord, tagNames: rel.tagNames || [] });
+        } else if (!existing) {
+          failedRelatedWords += 1;
         }
       }
-      // linkWords/tagWord each set the shared storageError flag on their own
-      // success/failure — in a run of several calls, a later success would
-      // otherwise silently clear an earlier failure's flag before anyone
-      // saw it. Track failures locally and restore the flag once at the end
-      // if anything in this batch didn't save.
-      let anyFailed = false;
+      // linkWords/tagWord each set the shared storageError message on their
+      // own success/failure — in a run of several calls, a later success
+      // would otherwise silently clear an earlier failure's message before
+      // anyone saw it. Count failures locally and set one summary message
+      // at the end if anything in this batch didn't save.
+      let failedLinks = 0;
+      let failedTags = 0;
       for (let i = 0; i < group.length; i++) {
         for (let j = i + 1; j < group.length; j++) {
-          if (!(await linkWords(group[i].id, group[j].id))) anyFailed = true;
+          if (!(await linkWords(group[i].id, group[j].id))) failedLinks += 1;
         }
       }
       for (const name of mainTagNames || []) {
-        if (!(await tagWord(mainWord.id, name))) anyFailed = true;
+        if (!(await tagWord(mainWord.id, name))) failedTags += 1;
       }
       for (const { word, tagNames } of relatedWithTags) {
         for (const name of tagNames) {
-          if (!(await tagWord(word.id, name))) anyFailed = true;
+          if (!(await tagWord(word.id, name))) failedTags += 1;
         }
       }
-      if (anyFailed) setStorageError(true);
+      if (failedRelatedWords || failedLinks || failedTags) {
+        const parts = [];
+        if (failedRelatedWords) parts.push(`${failedRelatedWords} сродних речи`);
+        if (failedLinks) parts.push(`${failedLinks} веза`);
+        if (failedTags) parts.push(`${failedTags} тагова`);
+        setStorageError(`„${sr}“ је сачувана, али није све остало: ${parts.join(', ')}.`);
+      }
       // The main word's part of speech was already suggested on the form
       // while typing (and could be changed there); related words created
       // alongside it have no such field, so they are tagged here.
@@ -428,7 +457,12 @@ export default function App() {
         }
       }
 
-      if (stats.failed > 0 || stats.failedWords > 0) setStorageError(true);
+      if (stats.failed > 0 || stats.failedWords > 0) {
+        const parts = [];
+        if (stats.failedWords) parts.push(`${stats.failedWords} речи`);
+        if (stats.failed) parts.push(`${stats.failed} тагова/веза`);
+        setStorageError(`Увоз није у потпуности сачуван: ${parts.join(', ')}.`);
+      }
       return stats;
     },
     [words, tags, addWord, tagWord, linkWords]
@@ -437,10 +471,10 @@ export default function App() {
   const untagWord = useCallback(async (wordId, tagId) => {
     const { error } = await api.untagWord(wordId, tagId);
     if (error) {
-      setStorageError(true);
+      setStorageError('Не могу да уклоним таг.');
       return;
     }
-    setStorageError(false);
+    setStorageError(null);
     setWords((prev) =>
       prev.map((w) => (w.id === wordId ? { ...w, tagIds: w.tagIds.filter((tid) => tid !== tagId) } : w))
     );
@@ -505,7 +539,7 @@ export default function App() {
             className="mt-6 text-sm text-center rounded-lg py-2 px-3"
             style={{ background: '#3A1F26', color: '#E8A0A8' }}
           >
-            Не могу да сачувам промене. Покушајте поново.
+            {storageError}
           </div>
         )}
       </div>
