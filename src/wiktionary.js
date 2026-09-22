@@ -57,26 +57,60 @@ export async function fetchExample(srWord) {
   return null;
 }
 
-// Best-effort lookup of related/derived words from English Wiktionary —
-// Serbian is filed there under the merged "Serbo-Croatian" (sh) language
-// section. CORS-enabled, no backend needed. Returns null if the word
-// isn't found there at all, or has no Serbo-Croatian section, or has no
-// related/derived terms listed — all expected fairly often, not a bug.
-export async function fetchRelatedWordsFromWiktionary(srWord) {
-  const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
-  const res = await fetch(url);
-  // A 404 genuinely means "no such page" — treated as not-found by callers.
-  // Anything else non-ok (429 rate-limited, a 5xx blip) is a different
-  // situation and should surface as an error state ("try again"), not get
-  // shown identically to "nothing exists for this word".
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Wiktionary request failed (${res.status})`);
-  const html = await res.text();
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const heading = doc.getElementById('Serbo-Croatian');
-  const section = heading?.closest('section');
-  if (!section) return null;
+// ---- Reading Wiktionary pages --------------------------------------------
+//
+// Four lookups (related words, part of speech, IPA, declension/conjugation
+// tables) all read the same page, so the page is fetched once and shared: the
+// first request for a title is kept for the rest of the session and any other
+// lookup of the same title reuses it. A failed request (429, 5xx, network) is
+// not kept, so trying again really tries again. A 404 ("no such page") is
+// kept — asking again would only get the same answer.
 
+const pageCache = new Map();
+const PAGE_CACHE_LIMIT = 30;
+
+export function clearWiktionaryCache() {
+  pageCache.clear();
+}
+
+// Resolves to the parsed page, or null when the page doesn't exist. Rejects on
+// any other failure, so callers can tell "not there" from "try again later".
+export function fetchWiktionaryDoc(title) {
+  const cached = pageCache.get(title);
+  if (cached) return cached;
+
+  const request = (async () => {
+    const res = await fetch(`https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(title)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Wiktionary request failed (${res.status})`);
+    return new DOMParser().parseFromString(await res.text(), 'text/html');
+  })();
+
+  pageCache.set(title, request);
+  request.catch(() => {
+    if (pageCache.get(title) === request) pageCache.delete(title);
+  });
+  if (pageCache.size > PAGE_CACHE_LIMIT) pageCache.delete(pageCache.keys().next().value);
+  return request;
+}
+
+// Serbian is filed on English Wiktionary under the merged "Serbo-Croatian"
+// language section. Returns that section of a parsed page, or null when the
+// page has none.
+export function serboCroatianSection(doc) {
+  return doc?.getElementById('Serbo-Croatian')?.closest('section') || null;
+}
+
+async function loadSection(title) {
+  const doc = await fetchWiktionaryDoc(title);
+  return doc ? serboCroatianSection(doc) : null;
+}
+
+// The parsers below only read the section they are given (they never change
+// it), because the same parsed page is shared between lookups.
+
+// Related / derived terms. Returns null when the section lists none.
+export function parseRelatedTerms(section) {
   const terms = [];
   const seen = new Set();
   // ids get a "_2", "_3" suffix etc. when a word has multiple
@@ -102,82 +136,27 @@ export async function fetchRelatedWordsFromWiktionary(srWord) {
   return terms.length > 0 ? terms : null;
 }
 
-// Best-effort lookup of a word's part(s) of speech from English Wiktionary:
-// the headings (Verb, Noun, Adjective...) inside the Serbo-Croatian section,
-// returned as Serbian tag names — see posTagNamesFromHeadingIds. Returns []
-// when the word has no page or no recognisable heading (expected fairly often,
-// not a bug) and throws on a real failure (429, 5xx, network) so callers can
-// tell "not there" from "try again later". Cyrillic spellings are looked up in
-// Latin, and a reflexive "…ti se" falls back to the plain verb's page.
-export async function fetchPartsOfSpeechFromWiktionary(srWord) {
-  const clean = stripPitchAccent(String(srWord).trim());
-  const latin = isCyrillic(clean) ? cyrillicToLatin(clean) : clean;
-  const titles = [latin];
-  if (/\s+se$/i.test(latin)) titles.push(latin.replace(/\s+se$/i, ''));
-
-  for (const title of titles) {
-    const res = await fetch(`https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(title)}`);
-    if (res.status === 404) continue;
-    if (!res.ok) throw new Error(`Wiktionary request failed (${res.status})`);
-    const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
-    const section = doc.getElementById('Serbo-Croatian')?.closest('section');
-    if (!section) continue;
-    const names = posTagNamesFromHeadingIds(Array.from(section.querySelectorAll('h3, h4, h5')).map((h) => h.id));
-    if (names.length > 0) return names;
-  }
-  return [];
+// Part(s) of speech as Serbian tag names — see posTagNamesFromHeadingIds.
+export function parsePartsOfSpeech(section) {
+  return posTagNamesFromHeadingIds(Array.from(section.querySelectorAll('h3, h4, h5')).map((h) => h.id));
 }
 
-// Best-effort IPA pronunciation lookup, reusing the same Wiktionary REST
-// endpoint/section as the related-words lookup above (a separate request,
-// though, since this one fires opportunistically off the pronounce button
-// rather than requiring a user to click "Прикажи повезане речи" first).
-// Grabs the first IPA span in the Serbo-Croatian section rather than
-// trying to disambiguate multiple etymologies — good enough for a
-// best-effort hint, not meant to be exhaustive.
-export async function fetchIpaFromWiktionary(srWord) {
-  const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
-  const res = await fetch(url);
-  // A 404 genuinely means "no such page" — treated as not-found by callers.
-  // Anything else non-ok (429 rate-limited, a 5xx blip) is a different
-  // situation and should surface as an error state ("try again"), not get
-  // shown identically to "nothing exists for this word".
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Wiktionary request failed (${res.status})`);
-  const html = await res.text();
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const heading = doc.getElementById('Serbo-Croatian');
-  const section = heading?.closest('section');
-  if (!section) return null;
-  const ipaEl = section.querySelector('.IPA');
-  const text = ipaEl?.textContent?.trim();
+// The first IPA span in the section rather than trying to disambiguate
+// multiple etymologies — good enough for a best-effort hint, not meant to be
+// exhaustive.
+export function parseIpa(section) {
+  const text = section.querySelector('.IPA')?.textContent?.trim();
   return text || null;
 }
 
-// Best-effort declension (nouns/adjectives) or conjugation (verbs) table
-// lookup — reuses the same Wiktionary REST endpoint/section as the other
-// lookups above. Each cell prefers its <a title="..."> (clean spelling,
-// same trick used for related words) and falls back to stripPitchAccent
-// on the visible text otherwise — needed for cells that link back to the
-// headword itself (no title on a self-link) and any cell with no link at
-// all (e.g. an em dash for a form that doesn't exist). A word can have
-// more than one table (multiple etymologies/senses each with their own),
-// so this returns all of them rather than just the first.
-export async function fetchInflectionTables(srWord) {
-  const url = `https://en.wiktionary.org/api/rest_v1/page/html/${encodeURIComponent(srWord)}`;
-  const res = await fetch(url);
-  // A 404 genuinely means "no such page" — treated as not-found by callers.
-  // Anything else non-ok (429 rate-limited, a 5xx blip) is a different
-  // situation and should surface as an error state ("try again"), not get
-  // shown identically to "nothing exists for this word".
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Wiktionary request failed (${res.status})`);
-  const html = await res.text();
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const heading = doc.getElementById('Serbo-Croatian');
-  const section = heading?.closest('section');
-  if (!section) return null;
-
+// Declension (nouns/adjectives) or conjugation (verbs) tables. Each cell
+// prefers its <a title="..."> (clean spelling, same trick used for related
+// words) and falls back to stripPitchAccent on the visible text otherwise —
+// needed for cells that link back to the headword itself (no title on a
+// self-link) and any cell with no link at all (e.g. an em dash for a form that
+// doesn't exist). A word can have more than one table (multiple
+// etymologies/senses each with their own), so this returns all of them.
+export function parseInflectionTables(section) {
   const cellText = (cell) => {
     const link = cell.querySelector('a[title]');
     if (link) return link.getAttribute('title').trim();
@@ -208,6 +187,43 @@ export async function fetchInflectionTables(srWord) {
     if (rows.length > 0) tables.push({ caption, rows });
   });
   return tables.length > 0 ? tables : null;
+}
+
+// ---- The lookups the app calls --------------------------------------------
+// Best-effort: not finding a word is expected fairly often, not a bug. Each
+// resolves to null (or [] for parts of speech) when there is nothing, and
+// rejects on a real failure.
+
+export async function fetchRelatedWordsFromWiktionary(srWord) {
+  const section = await loadSection(srWord);
+  return section ? parseRelatedTerms(section) : null;
+}
+
+// Cyrillic spellings are looked up in Latin, and a reflexive "…ti se" falls
+// back to the plain verb's page.
+export async function fetchPartsOfSpeechFromWiktionary(srWord) {
+  const clean = stripPitchAccent(String(srWord).trim());
+  const latin = isCyrillic(clean) ? cyrillicToLatin(clean) : clean;
+  const titles = [latin];
+  if (/\s+se$/i.test(latin)) titles.push(latin.replace(/\s+se$/i, ''));
+
+  for (const title of titles) {
+    const section = await loadSection(title);
+    if (!section) continue;
+    const names = parsePartsOfSpeech(section);
+    if (names.length > 0) return names;
+  }
+  return [];
+}
+
+export async function fetchIpaFromWiktionary(srWord) {
+  const section = await loadSection(srWord);
+  return section ? parseIpa(section) : null;
+}
+
+export async function fetchInflectionTables(srWord) {
+  const section = await loadSection(srWord);
+  return section ? parseInflectionTables(section) : null;
 }
 
 // Best-effort translation suggestions (sr → ru) via the free, CORS-enabled
