@@ -332,12 +332,10 @@ the test database) in the same change.
   `otherScript(sr)`/`cyrillicToLatin`/`latinToCyrillic` in `src/logic.js`.
   Answer-checking accepts either script for sr answers. `backend/src/serbianScript.js`
   is a deliberate small duplicate of `src/logic.js`'s conversion table, not a
-  shared import — see that file's own comment for why. A one-off "Пребаци на
-  латиницу" button in the Words tab (`App.jsx`'s `normalizeScriptToLatin`,
-  `logic.js`'s `planScriptNormalization`) converts words saved before this
-  existed; a word whose Latin form would collide with one that already
-  exists is skipped and reported rather than merged, since duplicate
-  detection has only ever run in the browser, not the database.
+  shared import — see that file's own comment for why. (Kira's existing words
+  were converted once, by hand, via a one-off migration button that has since
+  been removed — nothing to run again; any new Cyrillic entry just converts
+  itself on save from here on.)
 - **Case**: `sr` and `ru` are lowercased on save so e.g. "Blag"/"blag" collapse
   to one entry — this now happens on the server (`cleanWordFields` in
   `backend/src/http.js`), not in the browser. `example` is *not* lowercased

@@ -16,7 +16,6 @@ import {
   findDuplicateWord,
   parseImportData,
   wordsNeedingPartOfSpeech,
-  planScriptNormalization,
 } from './logic';
 
 export default function App() {
@@ -294,41 +293,6 @@ export default function App() {
     [words, tags, tagWord]
   );
 
-  // The one-off pass for words saved before the backend started converting sr
-  // to Latin automatically on every save (see backend/src/http.js) — goes
-  // through every word still written in Cyrillic and re-saves it, which the
-  // server then stores as Latin. Safe to run again: a word already in Latin
-  // just isn't picked up next time.
-  //
-  // Duplicate detection for new words has only ever run in the browser, never
-  // enforced by the database, so it's possible a word already exists twice —
-  // once per script — from before that check existed. Converting one to match
-  // the other would create a silent, exact duplicate, so instead a collision
-  // is skipped and reported for a person to look at, the same "tell me, don't
-  // guess" approach import already uses for a word it can't place.
-  const normalizeScriptToLatin = useCallback(
-    async (onProgress) => {
-      const plan = planScriptNormalization(words);
-      const result = { total: plan.length, converted: 0, collisions: [] };
-      let failed = 0;
-      for (let i = 0; i < plan.length; i++) {
-        onProgress(i, plan.length);
-        const step = plan[i];
-        if (step.collidesWith) {
-          result.collisions.push({ sr: step.word.sr, collidesWith: step.collidesWith.sr });
-          continue;
-        }
-        const saved = await updateWord(step.word.id, step.target, step.word.ru, step.word.example);
-        if (saved) result.converted += 1;
-        else failed += 1;
-      }
-      onProgress(plan.length, plan.length);
-      if (failed > 0) setStorageError(`Неке речи нису сачуване (${failed}). Покушајте поново.`);
-      return result;
-    },
-    [words, updateWord]
-  );
-
   // Adds the main word, then any selected related words (e.g. picked from
   // the Wiktionary related-words list) — reusing an existing dictionary
   // entry instead of creating a duplicate where one already matches. A
@@ -562,7 +526,6 @@ export default function App() {
                 onUntag={untagWord}
                 onImport={importWords}
                 onDetectPartsOfSpeech={detectPartsOfSpeech}
-                onNormalizeScript={normalizeScriptToLatin}
               />
             )}
             {tab === 'add' && (
