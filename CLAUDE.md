@@ -104,6 +104,15 @@ it does not exist or starts it if it does. Other flags:
   editing `.env`**, since Docker only reads it when the container is created.
 - `--stop` — stop it.
 
+The backend runs under `node --watch` so it restarts itself on a file change —
+usually. Docker's file-sharing on macOS occasionally drops that change
+notification, most often for a **newly created file**, leaving the backend
+serving old code indefinitely with nothing in the logs to say so (confirmed
+once: a change sat unpicked-up for 21 hours). If a backend change doesn't
+seem to be taking effect, don't assume the code is wrong — check
+`docker logs srb-cards-dev` for a recent "Restarting" / "API listening" line,
+and if there isn't one, `./run_dev.sh --recreate` to force a fresh start.
+
 `.env` is gitignored. Write values **without quotes** — Docker reads the file
 itself and treats quotes as part of the value.
 
@@ -315,10 +324,20 @@ the test database) in the same change.
   `TagScopeBar`, all follow this same two-row pattern — keep them consistent
   if it changes again.
 
-- **Serbian script**: stored in whichever script was typed; the *other*
-  script is derived on the fly via `cyrillicToLatin`/`latinToCyrillic`
-  (deterministic, not stored). `otherScript(sr)` picks the right direction.
-  Answer-checking accepts either script for sr answers.
+- **Serbian script**: `sr` is always **stored as Latin**, whichever script it
+  was typed in — the server converts on save (`cleanWordFields` in
+  `backend/src/http.js`, via `backend/src/serbianScript.js`; Cyrillic → Latin
+  is the clean, lossless direction, unlike the reverse). The *other* script
+  (Cyrillic) is still derived on the fly for display, never stored —
+  `otherScript(sr)`/`cyrillicToLatin`/`latinToCyrillic` in `src/logic.js`.
+  Answer-checking accepts either script for sr answers. `backend/src/serbianScript.js`
+  is a deliberate small duplicate of `src/logic.js`'s conversion table, not a
+  shared import — see that file's own comment for why. A one-off "Пребаци на
+  латиницу" button in the Words tab (`App.jsx`'s `normalizeScriptToLatin`,
+  `logic.js`'s `planScriptNormalization`) converts words saved before this
+  existed; a word whose Latin form would collide with one that already
+  exists is skipped and reported rather than merged, since duplicate
+  detection has only ever run in the browser, not the database.
 - **Case**: `sr` and `ru` are lowercased on save so e.g. "Blag"/"blag" collapse
   to one entry — this now happens on the server (`cleanWordFields` in
   `backend/src/http.js`), not in the browser. `example` is *not* lowercased
