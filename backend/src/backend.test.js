@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { authFailureStatus, fetchAllRows } from './http.js';
+import { authFailureStatus, fetchAllRows, cleanWordFields } from './http.js';
 import { ensureTag } from './tags.js';
 
 describe('authFailureStatus', () => {
@@ -194,5 +194,31 @@ describe('GET /api/vocabulary with more than 1000 rows', () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe('cleanWordFields', () => {
+  it('stores sr as Latin when typed in Cyrillic', () => {
+    expect(cleanWordFields({ sr: 'радити', ru: 'делать', example: null }).sr).toBe('raditi');
+  });
+
+  it('leaves sr already in Latin unchanged (besides lowercasing)', () => {
+    expect(cleanWordFields({ sr: 'Raditi', ru: 'делать', example: null }).sr).toBe('raditi');
+  });
+
+  it('converts digraph words correctly (nj/lj/dž) through the same lowercase+convert path', () => {
+    expect(cleanWordFields({ sr: 'Његов', ru: 'x', example: null }).sr).toBe('njegov');
+    expect(cleanWordFields({ sr: 'Љубав', ru: 'x', example: null }).sr).toBe('ljubav');
+  });
+
+  it('still lowercases ru and applies sentence case to example, unaffected by the script change', () => {
+    const cleaned = cleanWordFields({ sr: 'Voda', ru: 'ВОДА', example: 'pijem vodu.' });
+    expect(cleaned.ru).toBe('вода');
+    expect(cleaned.example).toBe('Pijem vodu.');
+  });
+
+  it('copes with empty/missing fields', () => {
+    expect(cleanWordFields({}).sr).toBe('');
+    expect(cleanWordFields({ sr: '  ', ru: '  ', example: '  ' })).toEqual({ sr: '', ru: '', example: null });
   });
 });

@@ -1,7 +1,7 @@
 // Moved out of App.jsx unchanged (part of the file split).
 
 import React, { useRef, useState } from 'react';
-import { Download, Loader2, Upload, Tag, Percent, Table2, Link2, Pencil, Trash2 } from 'lucide-react';
+import { Download, Loader2, Upload, Tag, Percent, Table2, Link2, Pencil, Trash2, Languages } from 'lucide-react';
 import { FONT_MONO, FONT_DISPLAY, FONT_BODY } from './theme';
 import { fetchInflectionTables } from './wiktionary';
 import {
@@ -56,7 +56,7 @@ function TagAccuracyPanel({ words, tags }) {
   );
 }
 
-export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, onUntag, onImport, onDetectPartsOfSpeech }) {
+export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, onTag, onUntag, onImport, onDetectPartsOfSpeech, onNormalizeScript }) {
   const [editingId, setEditingId] = useState(null);
   const [editSr, setEditSr] = useState('');
   const [editRuVariants, setEditRuVariants] = useState([]);
@@ -84,6 +84,9 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
   const [posState, setPosState] = useState('idle'); // idle | running | done | error
   const [posProgress, setPosProgress] = useState({ done: 0, total: 0 });
   const [posMessage, setPosMessage] = useState('');
+  const [scriptState, setScriptState] = useState('idle'); // idle | running | done | error
+  const [scriptProgress, setScriptProgress] = useState({ done: 0, total: 0 });
+  const [scriptMessage, setScriptMessage] = useState('');
   const importFileRef = useRef(null);
 
   const runPartOfSpeechDetection = async () => {
@@ -105,6 +108,33 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
     if (result.stoppedEarly) parts.push('Прекинуто — Wiktionary није одговорио. Покушај поново касније, наставиће одакле је стало.');
     setPosState(result.stoppedEarly ? 'error' : 'done');
     setPosMessage(parts.join(' '));
+  };
+
+  const runScriptNormalization = async () => {
+    if (scriptState === 'running' || !onNormalizeScript) return;
+    setScriptState('running');
+    setScriptMessage('');
+    setScriptProgress({ done: 0, total: 0 });
+    const result = await onNormalizeScript((done, total) => setScriptProgress({ done, total }));
+    if (result.total === 0) {
+      setScriptState('done');
+      setScriptMessage('Све речи су већ на латиници.');
+      return;
+    }
+    const parts = [`Претворено на латиницу: ${result.converted} од ${result.total}.`];
+    if (result.collisions.length > 0) {
+      const shown = result.collisions
+        .slice(0, 5)
+        .map((c) => `„${c.sr}“ (иста као „${c.collidesWith}“)`)
+        .join(', ');
+      parts.push(
+        `Прескочено јер већ постоји иста реч: ${result.collisions.length} (${shown}${
+          result.collisions.length > 5 ? '…' : ''
+        }). Погледај их ручно и одлучи шта да задржиш.`
+      );
+    }
+    setScriptState(result.collisions.length > 0 ? 'error' : 'done');
+    setScriptMessage(parts.join(' '));
   };
 
   const exportBackup = () => {
@@ -361,6 +391,19 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
             {posState === 'running' ? `${posProgress.done} / ${posProgress.total}` : 'Одреди врсте речи'}
           </button>
         )}
+        {onNormalizeScript && (
+          <button
+            type="button"
+            onClick={runScriptNormalization}
+            disabled={scriptState === 'running'}
+            className="flex items-center gap-1.5"
+            style={{ fontFamily: FONT_MONO, fontSize: '0.72rem', color: '#8892AE' }}
+            title="Претвори речи написане ћирилицом на латиницу (остатак апликације је непромењен)"
+          >
+            {scriptState === 'running' ? <Loader2 size={13} className="animate-spin" /> : <Languages size={13} />}
+            {scriptState === 'running' ? `${scriptProgress.done} / ${scriptProgress.total}` : 'Пребаци на латиницу'}
+          </button>
+        )}
         <input
           ref={importFileRef}
           type="file"
@@ -405,6 +448,18 @@ export function WordsList({ words, tags, onDelete, onUpdate, onLink, onUnlink, o
           }}
         >
           {posMessage}
+        </p>
+      )}
+      {scriptMessage && (
+        <p
+          style={{
+            color: scriptState === 'error' ? '#E28B95' : '#8892AE',
+            fontSize: '0.78rem',
+            paddingLeft: 4,
+            marginBottom: 4,
+          }}
+        >
+          {scriptMessage}
         </p>
       )}
       {showTagAccuracy && <TagAccuracyPanel words={words} tags={tags} />}

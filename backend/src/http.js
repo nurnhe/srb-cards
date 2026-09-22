@@ -1,3 +1,5 @@
+import { cyrillicToLatin, isCyrillic } from './serbianScript.js';
+
 // Express 4 does not catch errors thrown inside async handlers, so every route
 // is wrapped to forward rejections to the error middleware.
 export function route(handler) {
@@ -30,13 +32,23 @@ function capitalizeFirst(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
+// sr is always saved as Latin, whichever script it was typed in — Cyrillic to
+// Latin is the clean, lossless direction (each Cyrillic letter maps to one
+// Latin spelling; the reverse is ambiguous at digraph boundaries like dž/nj),
+// which is why Latin, not Cyrillic, is the one that gets stored. The other
+// script is still derived for display on the fly (otherScript in logic.js),
+// same as before — this only changes what's written to the database.
+function toLatinIfCyrillic(value) {
+  return isCyrillic(value) ? cyrillicToLatin(value) : value;
+}
+
 // Shared input handling: sr/ru are lowercased on save so "Blag"/"blag" collapse
 // to one entry; example gets sentence case (see capitalizeFirst above). Existing
 // rows saved before this rule existed keep whatever case they already have
 // until next edited — this only normalizes what's written from here on.
 export function cleanWordFields({ sr, ru, example }) {
   return {
-    sr: cleanField(sr).toLowerCase(),
+    sr: toLatinIfCyrillic(cleanField(sr).toLowerCase()),
     ru: cleanField(ru).toLowerCase(),
     example: capitalizeFirst(cleanField(example)) || null,
   };
