@@ -323,6 +323,20 @@ the test database) in the same change.
 The lookup code for all of them lives in `src/wiktionary.js` (moved out of
 `App.jsx`; part of the ongoing file split — see the Notion tickets).
 
+**Wiktionary is fetched once per title, not once per lookup.** Related words,
+part of speech, IPA and the declension/conjugation tables all read the same
+page (`fetchWiktionaryDoc`, a small in-memory `Map` cache of title → parsed
+page, cleared only by `clearWiktionaryCache()`, used in tests). Adding a word
+used to fire up to four separate requests for it; now it fires one, however
+many of the four lookups run. A 404 ("no such page") is cached — asking again
+gets the same answer — but a real failure (429/5xx/network) is not, so a retry
+actually retries. The four parsers (`parseRelatedTerms`, `parsePartsOfSpeech`,
+`parseIpa`, `parseInflectionTables`) are pure functions over a parsed
+`Serbo-Croatian` section and are tested in `src/wiktionary.test.js` against
+real saved pages in `src/__fixtures__/wiktionary/` — no network call, so they
+can't flake, and they're the most likely thing to break silently if
+Wiktionary changes its page markup.
+
 These deliberately did **not** move behind the backend: they have nothing to do
 with the database, and the two Wiktionary helpers parse HTML with `DOMParser`,
 which needs a browser. Worth revisiting later — Tatoeba and Glosbe are
