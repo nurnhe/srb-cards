@@ -24,26 +24,33 @@ async function withApp(fakeSupabase, userId, run) {
 }
 
 describe('GET /api/groups', () => {
-  it('returns groups with their full membership, replacing each member\'s raw user id with a "mine" boolean', async () => {
-    const groupRows = [{ id: 'g1', name: 'Друштво', invite_code: 'ABC', created_by: 'me', created_at: 't' }];
+  it('replaces each group\'s raw creator id and each member\'s raw user id with a "mine" boolean', async () => {
+    const rawGroupRows = [
+      { id: 'g1', name: 'Друштво', invite_code: 'ABC', created_by: 'me', created_at: 't' },
+      { id: 'g2', name: 'Клуб', invite_code: 'XYZ', created_by: 'them', created_at: 't2' },
+    ];
     const memberRows = [{ group_id: 'g1', user_id: 'me', joined_at: 't' }, { group_id: 'g1', user_id: 'them', joined_at: 't2' }];
     let inArg = null;
     const fakeSupabase = {
       from(table) {
         if (table === 'groups') {
-          return { select: () => ({ order: async () => ({ data: groupRows, error: null }) }) };
+          return { select: () => ({ order: async () => ({ data: rawGroupRows, error: null }) }) };
         }
         return { select: () => ({ in: async (col, ids) => { inArg = ids; return { data: memberRows, error: null }; } }) };
       },
     };
     const body = await withApp(fakeSupabase, 'me', async (base) => (await fetch(base)).json());
-    expect(body.groups).toEqual(groupRows);
+    expect(body.groups).toEqual([
+      { id: 'g1', name: 'Друштво', invite_code: 'ABC', created_at: 't', mine: true },
+      { id: 'g2', name: 'Клуб', invite_code: 'XYZ', created_at: 't2', mine: false },
+    ]);
+    expect(body.groups.some((g) => 'created_by' in g)).toBe(false);
     expect(body.members).toEqual([
       { group_id: 'g1', joined_at: 't', mine: true },
       { group_id: 'g1', joined_at: 't2', mine: false },
     ]);
     expect(body.members.some((m) => 'user_id' in m)).toBe(false);
-    expect(inArg).toEqual(['g1']);
+    expect(inArg).toEqual(['g1', 'g2']);
   });
 
   it('skips the membership query entirely when there are no groups', async () => {

@@ -10,13 +10,22 @@ router.param('id', (req, res, next, id) => (isValidId(id) ? next() : res.status(
 router.get(
   '/',
   route(async (req, res) => {
-    const { data: groups, error } = await req.supabase
+    const { data: rawGroups, error } = await req.supabase
       .from('groups')
       .select('id, name, invite_code, created_by, created_at')
       .order('created_at', { ascending: true });
     if (error) return fail(res, 'GET /api/groups', error);
 
-    const groupIds = (groups || []).map((g) => g.id);
+    // Same reasoning as the member-shaping below (and attachOwnership in
+    // shape.js): a fellow member's raw account id never needs to reach the
+    // browser. There's no "only the creator can rename/delete" UI yet, but
+    // if there ever is, `mine` is what it would gate on anyway.
+    const groups = (rawGroups || []).map(({ created_by, ...rest }) => ({
+      ...rest,
+      mine: created_by === req.userId,
+    }));
+
+    const groupIds = groups.map((g) => g.id);
     let members = [];
     if (groupIds.length > 0) {
       const { data, error: membersError } = await req.supabase
