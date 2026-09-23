@@ -1,11 +1,10 @@
 // Moved out of App.jsx unchanged (part of the file split).
 
 import React, { useRef, useState } from 'react';
-import { Download, Loader2, Upload, Tag, Percent, Table2, Link2, Pencil, Trash2, Users } from 'lucide-react';
+import { Download, Loader2, Upload, Tag, Table2, Link2, Pencil, Trash2, Users, MoreHorizontal } from 'lucide-react';
 import { FONT_MONO, FONT_DISPLAY, FONT_BODY } from './theme';
 import { fetchInflectionTables } from './wiktionary';
 import {
-  computeTagAccuracy,
   buildExportData,
   parseImportData,
   filterWordsByQuery,
@@ -18,7 +17,7 @@ import {
   rankTagsByUsage,
   scopeWords,
 } from './logic';
-import { SortPill, TagFilterPill, PosBadge, ShowMoreTagsButton } from './components/Pills';
+import { TagFilterPill, PosBadge, ShowMoreTagsButton } from './components/Pills';
 import { DictScopeBar } from './components/DictScopeBar';
 import { VariantsEditor } from './components/VariantsEditor';
 import { PronounceButton } from './components/PronounceButton';
@@ -29,34 +28,6 @@ import { InflectionTables } from './components/InflectionTables';
 /* ---------------- WORDS LIST ---------------- */
 
 const srCollator = new Intl.Collator('sr', { sensitivity: 'base' });
-
-// Accuracy broken down by tag, using each word's own correct_count/
-// wrong_count aggregated across every tag it carries — see
-// computeTagAccuracy. Surfaces categories that need more practice, not
-// just individual hard words.
-function TagAccuracyPanel({ words, tags }) {
-  const rows = computeTagAccuracy(words, tags);
-  return (
-    <div className="rounded-lg p-3 mb-1" style={{ background: '#12192E', border: '1px solid #3A4570' }}>
-      {rows.length === 0 ? (
-        <p style={{ color: '#8892AE', fontSize: '0.78rem' }}>
-          Још нема довољно вежбања по таговима.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          {rows.map((r) => (
-            <div key={r.tagId} className="flex items-center justify-between gap-3">
-              <span style={{ fontFamily: FONT_MONO, fontSize: '0.78rem', color: '#D4A54A' }}>{r.name}</span>
-              <span style={{ fontFamily: FONT_MONO, fontSize: '0.78rem', color: '#8892AE' }}>
-                {Math.round(r.accuracy * 100)}% ({r.correct}/{r.total})
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function WordsList({
   words,
@@ -94,14 +65,13 @@ export function WordsList({
   // asked to see in full.
   const [tagFilterExpanded, setTagFilterExpanded] = useState(false);
   const [expandedCardTags, setExpandedCardTags] = useState(new Set()); // word ids
-  const [sortMode, setSortMode] = useState('alpha'); // alpha | hardest
   const [searchQuery, setSearchQuery] = useState('');
   const [importState, setImportState] = useState('idle'); // idle | loading | error | done
   const [importMessage, setImportMessage] = useState('');
-  const [showTagAccuracy, setShowTagAccuracy] = useState(false);
   const [posState, setPosState] = useState('idle'); // idle | running | done | error
   const [posProgress, setPosProgress] = useState({ done: 0, total: 0 });
   const [posMessage, setPosMessage] = useState('');
+  const [showMenu, setShowMenu] = useState(false); // the "⋯" overflow menu (export/import/detect POS)
   const importFileRef = useRef(null);
 
   const runPartOfSpeechDetection = async () => {
@@ -180,24 +150,13 @@ export function WordsList({
     );
   }
 
-  const errorRate = (w) => {
-    const total = (w.correct_count || 0) + (w.wrong_count || 0);
-    if (total === 0) return -1; // untested words sort after tested-but-perfect ones
-    return (w.wrong_count || 0) / total;
-  };
-
   // Narrows to the selected dictionary (everything / just mine / a specific
-  // group) before anything else — sorting, tag filtering, search — applies.
+  // group) before anything else — tag filtering, search — applies. Sorted
+  // alphabetically only; sorting by difficulty is a Practice concept
+  // (buildWeightedDeck already weights toward missed words there), not a
+  // dictionary-browsing one.
   const scoped = scopeWords(words, scope);
-
-  const sorted = [...scoped].sort((a, b) => {
-    if (sortMode === 'hardest') {
-      const diff = errorRate(b) - errorRate(a);
-      if (diff !== 0) return diff;
-      return (b.wrong_count || 0) - (a.wrong_count || 0);
-    }
-    return srCollator.compare(a.sr, b.sr);
-  });
+  const sorted = [...scoped].sort((a, b) => srCollator.compare(a.sr, b.sr));
   // A word must have ALL selected tags (intersection), not just any one
   // of them — selecting more tags narrows the list.
   const filtered =
@@ -350,7 +309,7 @@ export function WordsList({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between mb-1" style={{ paddingLeft: 4, paddingRight: 2 }}>
+      <div className="flex items-center justify-end gap-2.5 mb-1" style={{ paddingLeft: 4, paddingRight: 2 }}>
         <div
           style={{
             color: '#5C6690',
@@ -361,47 +320,89 @@ export function WordsList({
         >
           {scoped.length} {scoped.length === 1 ? 'РЕЧ' : 'РЕЧИ'}
         </div>
-        <div className="flex gap-1">
-          <SortPill active={sortMode === 'alpha'} label="А–Ш" onClick={() => setSortMode('alpha')} />
-          <SortPill
-            active={sortMode === 'hardest'}
-            label="НАЈТЕЖЕ"
-            onClick={() => setSortMode('hardest')}
-          />
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 mb-1" style={{ paddingLeft: 4 }}>
-        <button
-          type="button"
-          onClick={exportBackup}
-          className="flex items-center gap-1.5"
-          style={{ fontFamily: FONT_MONO, fontSize: '0.72rem', color: '#8892AE' }}
-        >
-          <Download size={13} /> Извези резервну копију
-        </button>
-        <button
-          type="button"
-          onClick={() => importFileRef.current?.click()}
-          disabled={importState === 'loading'}
-          className="flex items-center gap-1.5"
-          style={{ fontFamily: FONT_MONO, fontSize: '0.72rem', color: '#8892AE' }}
-        >
-          {importState === 'loading' ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />} Увези
-        </button>
-        {onDetectPartsOfSpeech && (
+        <div style={{ position: 'relative' }}>
           <button
             type="button"
-            onClick={runPartOfSpeechDetection}
-            disabled={posState === 'running'}
-            className="flex items-center gap-1.5"
-            style={{ fontFamily: FONT_MONO, fontSize: '0.72rem', color: '#8892AE' }}
-            title="Потражи врсту речи (глагол, именица…) на Wiktionary-ју и додај таг свим речима које га немају"
+            onClick={() => setShowMenu((v) => !v)}
+            aria-label="Још опција"
+            aria-expanded={showMenu}
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 7,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: '#2A3355',
+              border: '1px solid #3A4570',
+              color: '#D4A54A',
+            }}
           >
-            {posState === 'running' ? <Loader2 size={13} className="animate-spin" /> : <Tag size={13} />}
-            {posState === 'running' ? `${posProgress.done} / ${posProgress.total}` : 'Одреди врсте речи'}
+            <MoreHorizontal size={15} />
           </button>
-        )}
+          {showMenu && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 8px)',
+                left: 0,
+                width: 230,
+                borderRadius: 12,
+                background: '#1B2440',
+                border: '1px solid #3A4570',
+                boxShadow: '0 12px 28px rgba(0,0,0,0.45)',
+                overflow: 'hidden',
+                zIndex: 10,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  exportBackup();
+                  setShowMenu(false);
+                }}
+                className="w-full flex items-center gap-2.5 text-left"
+                style={{ padding: '11px 14px', borderBottom: '1px solid #2A3355', fontFamily: FONT_MONO, fontSize: '0.85rem', color: '#F5F1E8' }}
+              >
+                <Download size={14} color="#8892AE" /> Извези резервну копију
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  importFileRef.current?.click();
+                  setShowMenu(false);
+                }}
+                disabled={importState === 'loading'}
+                className="w-full flex items-center gap-2.5 text-left"
+                style={{
+                  padding: '11px 14px',
+                  borderBottom: onDetectPartsOfSpeech ? '1px solid #2A3355' : 'none',
+                  fontFamily: FONT_MONO,
+                  fontSize: '0.85rem',
+                  color: '#F5F1E8',
+                }}
+              >
+                {importState === 'loading' ? <Loader2 size={14} className="animate-spin" color="#8892AE" /> : <Upload size={14} color="#8892AE" />} Увези
+              </button>
+              {onDetectPartsOfSpeech && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    runPartOfSpeechDetection();
+                    setShowMenu(false);
+                  }}
+                  disabled={posState === 'running'}
+                  className="w-full flex items-center gap-2.5 text-left"
+                  style={{ padding: '11px 14px', fontFamily: FONT_MONO, fontSize: '0.85rem', color: '#F5F1E8' }}
+                  title="Потражи врсту речи (глагол, именица…) на Wiktionary-ју и додај таг свим речима које га немају"
+                >
+                  {posState === 'running' ? <Loader2 size={14} className="animate-spin" color="#8892AE" /> : <Tag size={14} color="#8892AE" />}
+                  {posState === 'running' ? `${posProgress.done} / ${posProgress.total}` : 'Одреди врсте речи'}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         <input
           ref={importFileRef}
           type="file"
@@ -413,16 +414,6 @@ export function WordsList({
             if (file) importBackup(file);
           }}
         />
-        {tags && tags.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowTagAccuracy((v) => !v)}
-            className="flex items-center gap-1.5"
-            style={{ fontFamily: FONT_MONO, fontSize: '0.72rem', color: showTagAccuracy ? '#D4A54A' : '#8892AE' }}
-          >
-            <Percent size={13} /> Тачност по тагу
-          </button>
-        )}
       </div>
       {importMessage && (
         <p
@@ -448,8 +439,6 @@ export function WordsList({
           {posMessage}
         </p>
       )}
-      {showTagAccuracy && <TagAccuracyPanel words={words} tags={tags} />}
-
       <input
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}

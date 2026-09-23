@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { BookMarked, LogOut } from 'lucide-react';
+import { BookMarked, LogOut, Users } from 'lucide-react';
 import * as api from './api';
 import {
   fetchPartsOfSpeechFromWiktionary,
@@ -590,8 +590,12 @@ export default function App() {
       style={{ background: '#12192E', fontFamily: FONT_BODY }}
     >
       <div className="max-w-2xl mx-auto px-5 py-8">
-        <Header onLogout={async () => (await getSupabase()).auth.signOut()} />
-        <TabBar tab={tab} setTab={setTab} count={words.length} groupCount={groups.length} />
+        <Header
+          onLogout={async () => (await getSupabase()).auth.signOut()}
+          onOpenGroups={() => setTab('groups')}
+          groupsActive={tab === 'groups'}
+        />
+        <TabBar tab={tab} setTab={setTab} count={words.length} />
 
         {!ready ? (
           <div className="text-center py-20" style={{ color: '#8892AE' }}>
@@ -645,7 +649,7 @@ export default function App() {
   );
 }
 
-function Header({ onLogout }) {
+function Header({ onLogout, onOpenGroups, groupsActive }) {
   return (
     <div className="flex items-center gap-3 mb-7">
       <div
@@ -668,27 +672,43 @@ function Header({ onLogout }) {
           српски&nbsp;⇄&nbsp;руски речник
         </p>
       </div>
-      {onLogout && (
-        <button
-          type="button"
-          onClick={onLogout}
-          className="p-2 rounded-lg shrink-0"
-          style={{ color: '#8892AE' }}
-          title="Одјава"
-        >
-          <LogOut size={18} />
-        </button>
-      )}
+      <div className="flex items-center gap-1.5 shrink-0">
+        {onOpenGroups && (
+          <button
+            type="button"
+            onClick={onOpenGroups}
+            className="p-2 rounded-lg"
+            style={{
+              color: groupsActive ? '#12192E' : '#8892AE',
+              background: groupsActive ? '#D4A54A' : 'transparent',
+            }}
+            title="Групе"
+            aria-label="Групе"
+          >
+            <Users size={18} />
+          </button>
+        )}
+        {onLogout && (
+          <button
+            type="button"
+            onClick={onLogout}
+            className="p-2 rounded-lg"
+            style={{ color: '#8892AE' }}
+            title="Одјава"
+          >
+            <LogOut size={18} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
-function TabBar({ tab, setTab, count, groupCount }) {
+function TabBar({ tab, setTab, count }) {
   const tabs = [
     { id: 'practice', label: 'Вежбање' },
     { id: 'words', label: `Речи${count ? ` · ${count}` : ''}` },
     { id: 'add', label: 'Додај' },
-    { id: 'groups', label: `Групе${groupCount ? ` · ${groupCount}` : ''}` },
   ];
   return (
     <div
