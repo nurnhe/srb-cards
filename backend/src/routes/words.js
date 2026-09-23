@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { ensureTag } from '../tags.js';
-import { route, fail, cleanWordFields, WORD_COLUMNS, isValidId } from '../http.js';
+import { route, fail, cleanWordFields, isValidId } from '../http.js';
 
 const router = Router();
 
@@ -11,6 +11,9 @@ router.param('wordId', (req, res, next, id) => (isValidId(id) ? next() : res.sta
 router.param('tagId', (req, res, next, id) => (isValidId(id) ? next() : res.status(400).json({ error: 'invalid id' })));
 router.param('groupId', (req, res, next, id) => (isValidId(id) ? next() : res.status(400).json({ error: 'invalid id' })));
 
+// Neither of the next two routes asks Postgres for the row back via
+// .select() (RETURNING) — see the long comment on POST below for why that's
+// deliberate, not an oversight.
 router.post(
   '/',
   route(async (req, res) => {
@@ -19,21 +22,30 @@ router.post(
       return res.status(400).json({ error: 'sr and ru are required' });
     }
 
-    // user_id is set explicitly here rather than relying on a DB column
-    // default — see CLAUDE.md's schema notes on why.
-    const { data, error } = await req.supabase
-      .from('words')
-      .insert({ ...fields, user_id: req.userId })
-      .select(WORD_COLUMNS)
-      .single();
-    if (error || !data) return fail(res, 'POST /api/words', error);
+    // Generated here instead of left to the column's default(gen_random_uuid())
+    // and read back via .select().single() (INSERT ... RETURNING) — that
+    // combination hits a genuine Postgres RLS gotcha once a table's SELECT
+    // policy is anything more than a plain column comparison: words' SELECT
+    // policy is `word_is_visible(id)`, and that function does its own nested
+    // `select ... from words` to check group-sharing. A row inserted earlier
+    // in the SAME command isn't visible yet to a nested query inside that
+    // command's own RLS check — regardless of the function being `security
+    // definer` (that only affects privileges, not this per-command
+    // visibility rule) — so RETURNING fails with "new row violates
+    // row-level security policy" even though the row is perfectly valid and
+    // owned by the caller. A *separate* follow-up statement sees it fine
+    // (proven while debugging this live), which is exactly why generating
+    // the id ourselves and skipping RETURNING sidesteps the whole problem —
+    // we already know every field we'd otherwise be reading back.
+    const id = crypto.randomUUID();
+    const { error } = await req.supabase.from('words').insert({ id, ...fields, user_id: req.userId });
+    if (error) return fail(res, 'POST /api/words', error);
 
     // A word you just created is trivially yours — no query needed to know
     // that. user_id itself is never sent to the client (see attachOwnership
     // in shape.js) — nothing else in this app exposes one user's id to
     // another, and there's no reason to start with this one.
-    const { user_id, ...rest } = data;
-    res.status(201).json({ ...rest, relatedIds: [], tagIds: [], groupIds: [], correct_count: 0, wrong_count: 0, mine: true });
+    res.status(201).json({ id, ...fields, relatedIds: [], tagIds: [], groupIds: [], correct_count: 0, wrong_count: 0, mine: true });
   })
 );
 
@@ -45,27 +57,23 @@ router.patch(
       return res.status(400).json({ error: 'sr and ru are required' });
     }
 
-    // Returns the saved row so the browser updates its state from what actually
-    // landed in the database rather than re-deriving it. maybeSingle (rather
-    // than single) resolves with data: null and no error when the id simply
-    // doesn't match any row, instead of Postgrest's ambiguous "no rows"
-    // error — letting a stale/deleted id (or someone else's word, which RLS
-    // makes invisible to this query) return a clean 404 instead of a
-    // generic 500.
-    const { data, error } = await req.supabase
+    // { count: 'exact' } asks PostgREST for how many rows matched, via a
+    // separate `Prefer: count=exact` header — NOT the same as .select(),
+    // so it doesn't trigger the RETURNING+RLS issue described on POST above.
+    // A stale/deleted id (or someone else's word, which RLS makes invisible
+    // to this query) matches zero rows rather than erroring, which is what
+    // used to come from maybeSingle() resolving to data: null — same "not
+    // found" signal, just from a count instead of a missing row.
+    const { error, count } = await req.supabase
       .from('words')
-      .update(fields)
-      .eq('id', req.params.id)
-      .select(WORD_COLUMNS)
-      .maybeSingle();
+      .update(fields, { count: 'exact' })
+      .eq('id', req.params.id);
     if (error) return fail(res, 'PATCH /api/words/:id', error);
-    if (!data) return fail(res, 'PATCH /api/words/:id', new Error('Word not found'), 404);
+    if (!count) return fail(res, 'PATCH /api/words/:id', new Error('Word not found'), 404);
 
-    // Ownership doesn't change on edit — strip the raw id the same way POST
-    // does rather than send it, since the frontend already knows `mine` from
-    // the word it's patching and doesn't need it repeated here.
-    const { user_id, ...rest } = data;
-    res.json(rest);
+    // Ownership doesn't change on edit; we already know every field we just
+    // wrote, so there's nothing RETURNING would have told us anyway.
+    res.json({ id: req.params.id, ...fields });
   })
 );
 

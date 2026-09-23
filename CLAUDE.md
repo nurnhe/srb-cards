@@ -173,8 +173,11 @@ Conventions worth keeping:
   supabase-js used, which is why the call sites in `App.jsx` barely changed. The
   wrapper catches network failures too, so nothing throws at a call site.
 - `sr`/`ru` are lowercased **on the server** (`backend/src/http.js`), so that
-  rule lives in one place. Routes return the saved row and the browser patches
-  its state from that rather than re-deriving it.
+  rule lives in one place. Routes return the saved fields and the browser
+  patches its state from that rather than re-deriving it — for most tables
+  that's genuinely the row Postgres saved; `words`' create/edit routes build
+  the response from what they already know instead of reading the row back
+  (see the RLS + `RETURNING` gotcha in the schema notes below for why).
 - Supabase returns at most **1000 rows per request**, silently cutting the rest
   off. `GET /api/vocabulary` therefore reads each table page by page
   (`fetchAllRows` in `backend/src/http.js`, always with a full ordering). Any
@@ -239,49 +242,77 @@ docker run --rm --name srb-cards-prod \
 ## Database schema (Supabase, all in `public` schema)
 
 - **words**: `id uuid pk`, `user_id uuid` (fk → `auth.users`, cascade delete —
-  owner; **not null**, but see the migration note below if this ever needs
-  touching again), `sr text`, `ru text` (comma-separated accepted translation
-  variants), `example text` (nullable, Serbian-only usage example),
-  `correct_count int default 0`, `wrong_count int default 0`,
-  `created_at timestamptz`
+  the creator; **not null**), `sr text`, `ru text` (comma-separated accepted
+  translation variants), `example text` (nullable, Serbian-only usage
+  example), `created_at timestamptz`. No `correct_count`/`wrong_count` here
+  any more — that moved to `word_progress` (below), since a word can now be
+  practiced by more than one person.
 - **word_links**: `word_id`, `related_word_id` (both fk → words, cascade
   delete) — symmetric relation for linking same-root words (e.g. verb ↔
   noun); both directions are inserted on link. No `user_id` column here —
-  ownership is derived from the `words` rows it references (see RLS below).
+  visibility is derived from the `words` rows it references (see RLS below).
 - **tags** / **word_tags**: many-to-many tagging, same cascade-delete pattern.
-  `tags` also has `user_id` (same shape as `words`). Its unique index is on
-  `(user_id, lower(name))`, not just `lower(name))` — tags are per-user now, so
-  two users can each have their own "храна" tag. `ensureTag`
-  (`backend/src/tags.js`) relies on this to make its select-then-insert-
-  with-retry-on-conflict race-free, scoped to the caller's own tags via
-  `req.supabase`. `word_tags` has no `user_id` column either, same reasoning
-  as `word_links`.
-- **`increment_word_answer(p_word_id uuid, p_field text)`**: Postgres function,
-  atomically increments `correct_count` or `wrong_count` and returns the new
-  values — used by `POST /api/words/:id/answer` instead of a read-then-write,
-  which could lose an increment between two rapid requests for the same word.
-  It's `SECURITY INVOKER` (Postgres's default), so RLS on `words` applies to
-  its internal `UPDATE` automatically — calling it for someone else's word id
-  affects 0 rows rather than needing its own ownership check.
+  `tags` also has `user_id`. Its unique index is on `(user_id, lower(name))`,
+  not just `lower(name))` — tags are per-user, so two users can each have
+  their own "храна" tag, and this stays true even for a shared word (see
+  "Study groups" below — tags deliberately do **not** become shared).
+  `ensureTag` (`backend/src/tags.js`) relies on this to make its
+  select-then-insert-with-retry-on-conflict race-free, scoped to the
+  caller's own tags via `req.supabase`. `word_tags` has no `user_id` column
+  either, same reasoning as `word_links`.
+- **Study groups**: `groups` (`id`, `name`, `invite_code` unique, `created_by`,
+  `created_at`), `group_members` (`group_id`, `user_id`, `joined_at`),
+  `word_groups` (`word_id`, `group_id` — a row's presence means that word is
+  shared into that group, on top of always showing in its creator's own
+  personal list), `word_progress` (`word_id`, `user_id`, `correct_count`,
+  `wrong_count` — per-*user* practice stats, so two people sharing a word
+  each keep their own). See `supabase/migrations/006_study_groups_tables.sql`
+  and `007_expand_word_visibility.sql` for the full design writeup — the
+  short version: `word_is_visible(word_id)` and `is_group_member(group_id)`
+  are `security definer` helper functions that decide "owner OR shared to a
+  group I'm in," used across `words`/`word_links`/`word_tags`/`word_groups`'
+  policies; `create_group`/`join_group_by_code`/`group_member_emails` are
+  three more narrow `security definer` functions covering the handful of
+  things this app has no `service_role` key to otherwise do (resolve an
+  invite code before you're a member, read a groupmate's email from
+  `auth.users`, which RLS-scoped queries can't reach at all).
+- **`increment_word_progress(p_word_id uuid, p_field text)`**: Postgres
+  function, atomically increments a *caller's own* `correct_count` or
+  `wrong_count` in `word_progress` (upserting the row if it doesn't exist
+  yet) and returns the new values — used by `POST /api/words/:id/answer`
+  instead of a read-then-write, which could lose an increment between two
+  rapid requests for the same word. `SECURITY INVOKER` on purpose (unlike the
+  group functions above) — no reason for it to bypass RLS, only to create
+  the caller's own zero row on demand. Replaces the old `increment_word_answer`
+  (dropped in migration `009`, once the new backend was confirmed live).
 - **Row-level security is what actually enforces per-user isolation** — the
   backend has no `service_role` key to bypass it with anymore, so these
   policies are load-bearing, not just a floor:
-  - `words` / `tags`: `for all using (user_id = auth.uid()) with check
-    (user_id = auth.uid())` — straightforward own-row-only.
-  - `word_links` / `word_tags`: ownership is checked via an `exists` subquery
-    against the row(s) they reference (`words`/`tags`), *not* a `user_id`
-    column on the join table itself — a naive `user_id = auth.uid()` policy on
-    a join table only validates the join row's own owner, not that the
-    `word_id`/`tag_id` it points at actually belongs to that user, which
-    would let someone link/tag using another user's id.
+  - `words`: split into per-command policies (not one `for all`) — inserting
+    is still owner-only, but seeing/editing/deleting follows
+    `word_is_visible(id)`, so any member of a group a word is shared to can
+    edit or delete it too, not just its creator. This is deliberate — study
+    groups are meant to be fully collaborative.
+  - `tags`: `for all using (user_id = auth.uid()) with check (user_id =
+    auth.uid())` — straightforward own-row-only, unaffected by sharing.
+  - `word_links`: both sides use `word_is_visible`, same reasoning as words —
+    a word-family relationship is part of a word's content.
+  - `word_tags`: only the **word** side follows `word_is_visible`; the **tag**
+    side stays `t.user_id = auth.uid()`. Tags remain a strictly personal
+    namespace even on a shared word — a real, deliberate phase-1
+    simplification, not a bug.
+  - `groups`/`group_members`/`word_groups`/`word_progress`: see the migration
+    files for the exact policies — the short version is member-only
+    visibility, with group creation/joining routed through the two
+    `security definer` functions above rather than an RLS insert policy.
   - The original open policies (each named `public access`, `using (true)`)
-    must be **dropped** on all four tables. Postgres ORs permissive policies
-    together, so leaving one in place makes every user see everyone's data —
-    this happened during the first local test.
+    must be **dropped** on the original four tables. Postgres ORs permissive
+    policies together, so leaving one in place makes every user see
+    everyone's data — this happened during the first local test.
   - Any new table needs RLS enabled with a real per-owner policy following
-    one of these two patterns — never the old open `using (true)` pattern,
-    that only made sense back when a bypassing `service_role` key was the
-    only thing touching the tables.
+    one of these patterns — never the old open `using (true)` pattern, that
+    only made sense back when a bypassing `service_role` key was the only
+    thing touching the tables.
 - **Inserts set `user_id` explicitly in application code** (`backend/src/routes/words.js`'s
   `POST /`, `backend/src/tags.js`'s `ensureTag`) — there is deliberately no
   `default auth.uid()` on the column. A default would resolve to `NULL` for
@@ -290,6 +321,27 @@ docker run --rm --name srb-cards-prod \
   `service_role`, which has no `sub` claim) — a `NOT NULL` column with that
   default would have broken it instantly. Keep setting `user_id` explicitly on
   insert rather than reintroducing a default.
+- **Gotcha (found 2026-09-23, cost real debugging time): `INSERT ... RETURNING`
+  can fail RLS even for a row that's genuinely yours, once the table's SELECT
+  policy calls a function that does its own nested `select` against that same
+  table** (as `word_is_visible` does, for the group-sharing check). Postgres
+  re-checks the SELECT policy for whatever `RETURNING` would hand back, and a
+  row inserted earlier **in the same command** isn't visible yet to a nested
+  query inside that command's own RLS check — `security definer` doesn't
+  change this, since it only affects privileges, not per-command row
+  visibility. The error is the generic `new row violates row-level security
+  policy`, indistinguishable from a real ownership problem, which makes this
+  easy to misdiagnose as a broken policy when the policy is actually fine (a
+  *separate* follow-up statement sees the row without any issue — that's what
+  finally proved it, while debugging this live against the test project).
+  `POST /api/words` and `PATCH /api/words/:id` (`backend/src/routes/words.js`)
+  both work around it by never calling `.select()` after
+  insert/update — `POST` generates its own `id` with `crypto.randomUUID()`
+  instead of reading back the column's default, and `PATCH` asks for
+  `{ count: 'exact' }` instead of the row, since both already know every
+  field they'd otherwise be reading back. Keep this in mind before adding a
+  `.select()` onto any insert/update against `words` (or any future table
+  whose SELECT policy has the same shape).
 
 Schema changes ship as raw SQL Kira runs herself in Supabase's SQL Editor —
 there's no migration tool/history. When adding a column or table, give her

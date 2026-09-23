@@ -113,17 +113,14 @@ describe('POST /api/words/:id/answer', () => {
 });
 
 describe('POST /api/words (response shape)', () => {
-  it('never leaks the raw user_id, and defaults the new word to mine/empty relations', async () => {
+  it('generates its own id and skips RETURNING (never leaks user_id, defaults to mine/empty relations)', async () => {
+    let inserted = null;
     const fakeSupabase = {
       from: () => ({
-        insert: () => ({
-          select: () => ({
-            single: async () => ({
-              data: { id: 'w1', sr: 'hvala', ru: 'спасибо', example: null, user_id: 'me' },
-              error: null,
-            }),
-          }),
-        }),
+        insert: (row) => {
+          inserted = row;
+          return Promise.resolve({ error: null });
+        },
       }),
     };
     const res = await withApp(fakeSupabase, (base) =>
@@ -135,8 +132,13 @@ describe('POST /api/words (response shape)', () => {
     );
     const body = await res.json();
     expect(res.status).toBe(201);
+    // Insert carries a real generated uuid, and the RLS-safe insert never
+    // calls .select() — this fake `from()` would throw if it did, since it
+    // has no `select` method at all.
+    expect(inserted).toMatchObject({ sr: 'hvala', ru: 'спасибо', example: null, user_id: 'me' });
+    expect(inserted.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(body).toEqual({
-      id: 'w1',
+      id: inserted.id,
       sr: 'hvala',
       ru: 'спасибо',
       example: null,
@@ -147,5 +149,75 @@ describe('POST /api/words (response shape)', () => {
       wrong_count: 0,
       mine: true,
     });
+  });
+
+  it('reports the database error rather than a generic failure', async () => {
+    const fakeSupabase = { from: () => ({ insert: () => Promise.resolve({ error: { message: 'nope' } }) }) };
+    const res = await withApp(fakeSupabase, (base) =>
+      fetch(base, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sr: 'hvala', ru: 'спасибо' }),
+      })
+    );
+    expect(res.status).toBe(500);
+  });
+});
+
+describe('PATCH /api/words/:id', () => {
+  it('updates with a count request instead of .select(), and never calls .select()', async () => {
+    let updatedFields = null;
+    let updateOptions = null;
+    let eqArgs = null;
+    const fakeSupabase = {
+      from: () => ({
+        update: (fields, options) => {
+          updatedFields = fields;
+          updateOptions = options;
+          return { eq: (col, val) => { eqArgs = [col, val]; return Promise.resolve({ error: null, count: 1 }); } };
+        },
+      }),
+    };
+    const res = await withApp(fakeSupabase, (base) =>
+      fetch(`${base}/${WORD_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sr: 'hvala', ru: 'спасибо', example: 'Hvala ti.' }),
+      })
+    );
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(updatedFields).toEqual({ sr: 'hvala', ru: 'спасибо', example: 'Hvala ti.' });
+    expect(updateOptions).toEqual({ count: 'exact' });
+    expect(eqArgs).toEqual(['id', WORD_ID]);
+    expect(body).toEqual({ id: WORD_ID, sr: 'hvala', ru: 'спасибо', example: 'Hvala ti.' });
+  });
+
+  it('404s when the count comes back zero (stale id, deleted, or someone else\'s word)', async () => {
+    const fakeSupabase = {
+      from: () => ({ update: () => ({ eq: () => Promise.resolve({ error: null, count: 0 }) }) }),
+    };
+    const res = await withApp(fakeSupabase, (base) =>
+      fetch(`${base}/${WORD_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sr: 'hvala', ru: 'спасибо' }),
+      })
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('reports the database error rather than a generic failure', async () => {
+    const fakeSupabase = {
+      from: () => ({ update: () => ({ eq: () => Promise.resolve({ error: { message: 'nope' }, count: null }) }) }),
+    };
+    const res = await withApp(fakeSupabase, (base) =>
+      fetch(`${base}/${WORD_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sr: 'hvala', ru: 'спасибо' }),
+      })
+    );
+    expect(res.status).toBe(500);
   });
 });
