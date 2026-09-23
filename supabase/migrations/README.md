@@ -22,6 +22,7 @@ function) predates this record; it is described in `../schema.sql`.
 | 007_expand_word_visibility.sql | broadens words/word_links/word_tags RLS to include shared-group access | not run | run |
 | 008_migrate_word_progress_data.sql | backfills word_progress from words' existing counters | not run | run |
 | 009_drop_word_count_columns.sql | drops words.correct_count/wrong_count + increment_word_answer — **run only after confirming the new backend is deployed and working** | not run | not run |
+| 010_group_member_emails.sql | adds group_member_emails() so a member can see who else is in a group | not run | not run |
 
 Update the two right-hand columns when a file is run.
 

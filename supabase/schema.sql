@@ -221,6 +221,31 @@ begin
 end;
 $$;
 
+-- Lets a group member see who else is in the group. auth.users isn't
+-- reachable through ordinary RLS-scoped queries (Postgrest doesn't expose
+-- the auth schema, and this app has no service_role key to read it another
+-- way), so — same pattern as create_group/join_group_by_code — a narrow
+-- security definer function is the deliberate exception. Returns only
+-- `email` (the one identifier this app's accounts have), and only for group
+-- ids the caller themselves belongs to; any other group id in the array
+-- yields no rows for it, the same "invisible" behavior RLS gives elsewhere.
+create or replace function public.group_member_emails(p_group_ids uuid[])
+returns table (group_id uuid, user_id uuid, email text)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select gm.group_id, gm.user_id, u.email
+  from public.group_members gm
+  join auth.users u on u.id = gm.user_id
+  where gm.group_id = any(p_group_ids)
+    and exists (
+      select 1 from public.group_members caller
+      where caller.group_id = gm.group_id and caller.user_id = auth.uid()
+    );
+$$;
+
 -- Indexes for the lookups the security rules and deletes rely on ---------------
 -- (tags is covered by its unique index above, which starts with user_id)
 create index if not exists words_user_id_idx           on public.words (user_id);

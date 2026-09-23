@@ -24,19 +24,28 @@ async function withApp(fakeSupabase, userId, run) {
 }
 
 describe('GET /api/groups', () => {
-  it('replaces each group\'s raw creator id and each member\'s raw user id with a "mine" boolean', async () => {
+  it('replaces each group\'s raw creator id and each member\'s raw user id with "mine"/email', async () => {
     const rawGroupRows = [
       { id: 'g1', name: 'Друштво', invite_code: 'ABC', created_by: 'me', created_at: 't' },
       { id: 'g2', name: 'Клуб', invite_code: 'XYZ', created_by: 'them', created_at: 't2' },
     ];
     const memberRows = [{ group_id: 'g1', user_id: 'me', joined_at: 't' }, { group_id: 'g1', user_id: 'them', joined_at: 't2' }];
+    const emailRows = [
+      { group_id: 'g1', user_id: 'me', email: 'me@example.com' },
+      { group_id: 'g1', user_id: 'them', email: 'them@example.com' },
+    ];
     let inArg = null;
+    let rpcArgs = null;
     const fakeSupabase = {
       from(table) {
         if (table === 'groups') {
           return { select: () => ({ order: async () => ({ data: rawGroupRows, error: null }) }) };
         }
         return { select: () => ({ in: async (col, ids) => { inArg = ids; return { data: memberRows, error: null }; } }) };
+      },
+      rpc: async (name, args) => {
+        rpcArgs = { name, args };
+        return { data: emailRows, error: null };
       },
     };
     const body = await withApp(fakeSupabase, 'me', async (base) => (await fetch(base)).json());
@@ -46,11 +55,26 @@ describe('GET /api/groups', () => {
     ]);
     expect(body.groups.some((g) => 'created_by' in g)).toBe(false);
     expect(body.members).toEqual([
-      { group_id: 'g1', joined_at: 't', mine: true },
-      { group_id: 'g1', joined_at: 't2', mine: false },
+      { group_id: 'g1', joined_at: 't', mine: true, email: 'me@example.com' },
+      { group_id: 'g1', joined_at: 't2', mine: false, email: 'them@example.com' },
     ]);
     expect(body.members.some((m) => 'user_id' in m)).toBe(false);
     expect(inArg).toEqual(['g1', 'g2']);
+    expect(rpcArgs).toEqual({ name: 'group_member_emails', args: { p_group_ids: ['g1', 'g2'] } });
+  });
+
+  it('leaves email null for a member the emails RPC has no row for (should not happen, but stay safe)', async () => {
+    const rawGroupRows = [{ id: 'g1', name: 'Друштво', invite_code: 'ABC', created_by: 'me', created_at: 't' }];
+    const memberRows = [{ group_id: 'g1', user_id: 'me', joined_at: 't' }];
+    const fakeSupabase = {
+      from(table) {
+        if (table === 'groups') return { select: () => ({ order: async () => ({ data: rawGroupRows, error: null }) }) };
+        return { select: () => ({ in: async () => ({ data: memberRows, error: null }) }) };
+      },
+      rpc: async () => ({ data: [], error: null }),
+    };
+    const body = await withApp(fakeSupabase, 'me', async (base) => (await fetch(base)).json());
+    expect(body.members).toEqual([{ group_id: 'g1', joined_at: 't', mine: true, email: null }]);
   });
 
   it('skips the membership query entirely when there are no groups', async () => {

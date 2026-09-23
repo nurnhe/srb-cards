@@ -163,12 +163,18 @@ function InviteCode({ code }) {
 // only surviving until the next full page reload overwrites the minimal list.
 export function Groups({ groups, onCreate, onJoin, onLeave }) {
   const [details, setDetails] = useState({}); // group id -> { invite_code, ... }
+  const [membersByGroup, setMembersByGroup] = useState({}); // group id -> [{ email, mine }]
 
   useEffect(() => {
     let cancelled = false;
     getGroups().then(({ data }) => {
       if (cancelled || !data) return;
       setDetails(Object.fromEntries((data.groups || []).map((g) => [g.id, g])));
+      const byGroup = {};
+      (data.members || []).forEach((m) => {
+        (byGroup[m.group_id] ||= []).push(m);
+      });
+      setMembersByGroup(byGroup);
     });
     return () => {
       cancelled = true;
@@ -192,31 +198,45 @@ export function Groups({ groups, onCreate, onJoin, onLeave }) {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {groups.map((g) => (
-            <div
-              key={g.id}
-              className="rounded-xl px-4 py-3 flex items-center justify-between gap-3"
-              style={{ background: '#1B2440', border: '1px solid #2A3355' }}
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <Users size={16} color="#8892AE" className="shrink-0" />
-                <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>{g.name}</span>
+          {groups.map((g) => {
+            const members = membersByGroup[g.id] || [];
+            return (
+              <div
+                key={g.id}
+                className="rounded-xl px-4 py-3 flex flex-col gap-1.5"
+                style={{ background: '#1B2440', border: '1px solid #2A3355' }}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Users size={16} color="#8892AE" className="shrink-0" />
+                    <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>{g.name}</span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {details[g.id]?.invite_code && <InviteCode code={details[g.id].invite_code} />}
+                    <button
+                      type="button"
+                      onClick={() => onLeave(g.id)}
+                      className="p-2 rounded-md"
+                      style={{ color: '#8892AE' }}
+                      aria-label={`Напусти групу ${g.name}`}
+                      title="Напусти групу"
+                    >
+                      <LogOut size={15} />
+                    </button>
+                  </div>
+                </div>
+                {members.length > 0 && (
+                  <p style={{ color: '#5C6690', fontSize: '0.78rem', paddingLeft: 25 }}>
+                    Чланови:{' '}
+                    {members
+                      .map((m) => (m.mine ? 'ти' : m.email))
+                      .filter(Boolean)
+                      .join(', ')}
+                  </p>
+                )}
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {details[g.id]?.invite_code && <InviteCode code={details[g.id].invite_code} />}
-                <button
-                  type="button"
-                  onClick={() => onLeave(g.id)}
-                  className="p-2 rounded-md"
-                  style={{ color: '#8892AE' }}
-                  aria-label={`Напусти групу ${g.name}`}
-                  title="Напусти групу"
-                >
-                  <LogOut size={15} />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

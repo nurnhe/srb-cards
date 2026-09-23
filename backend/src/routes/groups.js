@@ -33,10 +33,29 @@ router.get(
         .select('group_id, user_id, joined_at')
         .in('group_id', groupIds);
       if (membersError) return fail(res, 'GET /api/groups', membersError);
+
+      // Emails come from a separate security-definer RPC (see the DB schema
+      // notes) since auth.users isn't reachable through an ordinary RLS
+      // query. Keyed by "groupId:userId" because the same person can be in
+      // more than one of the caller's groups.
+      const { data: emailRows, error: emailError } = await req.supabase.rpc('group_member_emails', {
+        p_group_ids: groupIds,
+      });
+      if (emailError) return fail(res, 'GET /api/groups', emailError);
+      const emailByKey = Object.fromEntries(
+        (emailRows || []).map((r) => [`${r.group_id}:${r.user_id}`, r.email])
+      );
+
       // Same reasoning as attachOwnership in shape.js: a groupmate's raw
       // user id never needs to reach the browser, only whether a given row
-      // is the caller's own membership.
-      members = (data || []).map(({ user_id, ...rest }) => ({ ...rest, mine: user_id === req.userId }));
+      // is the caller's own membership — email is what actually identifies
+      // them to a person, not the internal id.
+      members = (data || []).map(({ user_id, group_id, ...rest }) => ({
+        group_id,
+        ...rest,
+        mine: user_id === req.userId,
+        email: emailByKey[`${group_id}:${user_id}`] || null,
+      }));
     }
     res.json({ groups: groups || [], members });
   })
