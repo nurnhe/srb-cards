@@ -9,8 +9,15 @@ export function route(handler) {
 // supabase-js reports failures in the response body instead of throwing. Every
 // route funnels them through here, because the frontend only shows one generic
 // "не могу да сачувам" banner — the server log is the only real diagnostic.
+// Logs the full Postgres error object, not just .message — an RLS rejection's
+// .details/.hint/.code often say exactly which values it tried and why
+// (e.g. the failing row's actual column values), which .message alone omits.
 export function fail(res, where, error, status = 500) {
-  console.error(`[${where}]`, error?.message || error);
+  if (error && typeof error === 'object') {
+    console.error(`[${where}]`, { message: error.message, code: error.code, details: error.details, hint: error.hint });
+  } else {
+    console.error(`[${where}]`, error);
+  }
   return res.status(status).json({ error: error?.message || 'Database error' });
 }
 
