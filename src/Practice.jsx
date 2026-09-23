@@ -12,8 +12,10 @@ import {
   partOfSpeechTagIds,
   posAbbreviation,
   rankTagsByUsage,
+  scopeWords,
 } from './logic';
 import { DirectionPill, TagFilterPill, PosBadge, ShowMoreTagsButton } from './components/Pills';
+import { DictScopeBar } from './components/DictScopeBar';
 import { PronounceButton } from './components/PronounceButton';
 import { IpaText } from './components/IpaText';
 
@@ -22,8 +24,9 @@ import { IpaText } from './components/IpaText';
 const PRACTICE_TIMER_SECONDS = 30;
 const TIMER_ENABLED_STORAGE_KEY = 'practiceTimerEnabled';
 
-export function Practice({ words, tags, onAnswer }) {
+export function Practice({ words, tags, groups, onAnswer }) {
   const [direction, setDirection] = useState('sr-ru'); // sr-ru: show SR, ask RU
+  const [scope, setScope] = useState('all'); // 'all' | 'mine' | a group id
   const [tagFilter, setTagFilter] = useState(new Set()); // Set of tag ids; empty = all
   const [current, setCurrent] = useState(null);
   const [input, setInput] = useState('');
@@ -93,10 +96,14 @@ export function Practice({ words, tags, onAnswer }) {
     return () => clearInterval(interval);
   }, [current, feedback, timerEnabled]);
 
-  // A word must have ALL selected tags (intersection), not just any one
-  // of them — selecting more tags narrows the pool.
+  // Dictionary scope (everything / just mine / a specific group) narrows
+  // first, then the tag filter — a word must have ALL selected tags
+  // (intersection), not just any one of them.
+  const scopedWords = scopeWords(words, scope);
   const pool =
-    tagFilter.size > 0 ? words.filter((w) => Array.from(tagFilter).every((id) => w.tagIds.includes(id))) : words;
+    tagFilter.size > 0
+      ? scopedWords.filter((w) => Array.from(tagFilter).every((id) => w.tagIds.includes(id)))
+      : scopedWords;
 
   const drawNext = useCallback(
     (excludeId) => {
@@ -179,16 +186,21 @@ export function Practice({ words, tags, onAnswer }) {
   // words exist but the deck hasn't drawn a first card yet (happens for one
   // render right after mount/word-list changes, before the effect runs)
   if (!current) {
-    if (pool.length === 0 && tagFilter.size > 0) {
+    if (pool.length === 0 && (tagFilter.size > 0 || scope !== 'all')) {
       return (
         <div>
-          <TagScopeBar tags={tags} words={words} tagFilter={tagFilter} onChange={setTagFilter} />
+          {groups && groups.length > 0 && (
+            <div className="mb-1.5 flex justify-center">
+              <DictScopeBar groups={groups} scope={scope} onChange={setScope} />
+            </div>
+          )}
+          <TagScopeBar tags={tags} words={scopedWords} tagFilter={tagFilter} onChange={setTagFilter} />
           <div
             className="text-center rounded-2xl py-16 px-6"
             style={{ background: '#1B2440', border: '1px solid #2A3355' }}
           >
             <p style={{ color: '#8892AE', fontSize: '0.9rem' }}>
-              Нема речи са овим тагом за вежбање.
+              Нема речи за вежбање са овим избором.
             </p>
           </div>
         </div>
@@ -272,7 +284,12 @@ export function Practice({ words, tags, onAnswer }) {
 
   return (
     <div>
-      <TagScopeBar tags={tags} words={words} tagFilter={tagFilter} onChange={setTagFilter} />
+      {groups && groups.length > 0 && (
+        <div className="mb-1.5 flex justify-center">
+          <DictScopeBar groups={groups} scope={scope} onChange={setScope} />
+        </div>
+      )}
+      <TagScopeBar tags={tags} words={scopedWords} tagFilter={tagFilter} onChange={setTagFilter} />
 
       {/* direction toggle */}
       <div className="flex items-center justify-center gap-3 mb-5">

@@ -18,8 +18,18 @@ function) predates this record; it is described in `../schema.sql`.
 | 003_drop_open_policies.sql | remove the old open policies | run | not needed (never had them) |
 | 004_require_owner.sql | owner column mandatory | reported done — verify (query below) | built from schema.sql |
 | 005_indexes.sql | three indexes | run | run |
+| 006_study_groups_tables.sql | groups, group_members, word_groups, word_progress tables + helper functions | not run | run |
+| 007_expand_word_visibility.sql | broadens words/word_links/word_tags RLS to include shared-group access | not run | run |
+| 008_migrate_word_progress_data.sql | backfills word_progress from words' existing counters | not run | run |
+| 009_drop_word_count_columns.sql | drops words.correct_count/wrong_count + increment_word_answer — **run only after confirming the new backend is deployed and working** | not run | not run |
+| 010_group_member_emails.sql | adds group_member_emails() so a member can see who else is in a group | not run | run |
 
 Update the two right-hand columns when a file is run.
+
+**006 → 007 → 008 should run together, right before deploying the matching
+backend** — see 007's own header comment for why (it changes behavior for the
+*old* backend too, not just new code). 009 is separate on purpose: run it only
+once the new backend is confirmed live, same as 004 deferring `NOT NULL`.
 
 ## Checks
 

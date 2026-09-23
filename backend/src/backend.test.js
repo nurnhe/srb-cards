@@ -156,11 +156,22 @@ describe('GET /api/vocabulary with more than 1000 rows', () => {
 
     const CAP = 1000;
     const words = Array.from({ length: 1500 }, (_, i) => ({
-      id: `w${String(i).padStart(4, '0')}`, sr: `r${i}`, ru: 'x', example: null, correct_count: 0, wrong_count: 0,
+      id: `w${String(i).padStart(4, '0')}`, sr: `r${i}`, ru: 'x', example: null, user_id: i === 0 ? 'someone-else' : 'me',
     }));
     const links = words.slice(1).map((w, i) => ({ word_id: words[i].id, related_word_id: w.id }));
     const wordTags = words.map((w) => ({ word_id: w.id, tag_id: 't1' }));
-    const tables = { words, word_links: links, tags: [{ id: 't1', name: 'glagol' }], word_tags: wordTags };
+    const wordGroups = [{ word_id: 'w0000', group_id: 'g1' }];
+    const progress = [{ word_id: 'w0000', correct_count: 4, wrong_count: 2 }];
+    const groups = [{ id: 'g1', name: 'Друштво' }];
+    const tables = {
+      words,
+      word_links: links,
+      tags: [{ id: 't1', name: 'glagol' }],
+      word_tags: wordTags,
+      word_groups: wordGroups,
+      word_progress: progress,
+      groups,
+    };
 
     const fakeSupabase = {
       from(table) {
@@ -179,7 +190,7 @@ describe('GET /api/vocabulary with more than 1000 rows', () => {
     };
 
     const app = express();
-    app.use((req, res, next) => { req.supabase = fakeSupabase; next(); });
+    app.use((req, res, next) => { req.supabase = fakeSupabase; req.userId = 'me'; next(); });
     app.use('/api/vocabulary', vocabulary);
     const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
     try {
@@ -191,6 +202,13 @@ describe('GET /api/vocabulary with more than 1000 rows', () => {
       expect(body.words[0].relatedIds).toEqual(['w0001']);
       expect(body.words[1499].relatedIds).toEqual([]);
       expect(body.tags).toEqual([{ id: 't1', name: 'glagol' }]);
+      // Study-groups stitching: the shared word (w0000, owned by someone
+      // else) carries its group and its own — the caller's — progress; a
+      // word never shared or practiced defaults cleanly.
+      expect(body.words[0]).toMatchObject({ mine: false, groupIds: ['g1'], correct_count: 4, wrong_count: 2 });
+      expect(body.words[1499]).toMatchObject({ mine: true, groupIds: [], correct_count: 0, wrong_count: 0 });
+      expect(body.words.some((w) => 'user_id' in w)).toBe(false);
+      expect(body.groups).toEqual([{ id: 'g1', name: 'Друштво' }]);
     } finally {
       server.close();
     }

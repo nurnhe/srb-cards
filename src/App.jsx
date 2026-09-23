@@ -10,6 +10,7 @@ import { LoginGate, NewPasswordGate } from './Auth';
 import { Practice } from './Practice';
 import { WordsList } from './WordsList';
 import { AddWord } from './AddWord';
+import { Groups } from './Groups';
 import {
   otherScript,
   normalize,
@@ -23,6 +24,7 @@ export default function App() {
 
   const [words, setWords] = useState([]);
   const [tags, setTags] = useState([]);
+  const [groups, setGroups] = useState([]);
   const [ready, setReady] = useState(false);
   // null when there's nothing to show; otherwise the specific message to
   // display — replaces a plain true/false flag so a failure says what
@@ -78,6 +80,7 @@ export default function App() {
       setReady(false);
       setWords([]);
       setTags([]);
+      setGroups([]);
     }
   }, [authed]);
 
@@ -96,6 +99,7 @@ export default function App() {
     setStorageError(null);
     setTags(data.tags || []);
     setWords(data.words || []);
+    setGroups(data.groups || []);
     return { unauthorized: false };
   }, []);
 
@@ -235,6 +239,28 @@ export default function App() {
     return true;
   }, []);
 
+  // Returns whether it actually saved — see linkWords' comment for why
+  // callers doing several of these in a row (addWordWithRelated) need to
+  // know, to fold failures into one summary message instead of several.
+  // Declared before addWordWithRelated (below), which references it in its
+  // own dependency array — a useCallback's deps are evaluated at render
+  // time, so referencing a sibling const declared later in this same
+  // function body throws "Cannot access before initialization".
+  const shareWordToGroup = useCallback(async (wordId, groupId) => {
+    const { error } = await api.shareWordToGroup(wordId, groupId);
+    if (error) {
+      setStorageError('Не могу да поделим реч са групом.');
+      return false;
+    }
+    setStorageError(null);
+    setWords((prev) =>
+      prev.map((w) =>
+        w.id === wordId && !w.groupIds.includes(groupId) ? { ...w, groupIds: [...w.groupIds, groupId] } : w
+      )
+    );
+    return true;
+  }, []);
+
   // Looks up a word's part of speech and tags it (glagol, imenica...). Runs in
   // the background after a word is saved and never gets in the way: a word
   // Wiktionary doesn't know, or a failed lookup, just leaves it untagged — the
@@ -306,9 +332,13 @@ export default function App() {
   // the same add can go to different subsets of the words, since e.g.
   // "verbs" might apply to the whole family while a more specific tag
   // only fits one of them.
-  // relatedSelections: [{ sr, ru, tagNames: string[] }], mainTagNames: [string]
+  // relatedSelections: [{ sr, ru, tagNames: string[] }], mainTagNames: [string],
+  // groupIds: [string] — groups to share the MAIN word with (not any related
+  // words created alongside it; the simplest reading of an otherwise
+  // unspecified case, since group sharing has no per-related-word breakdown
+  // the way tags do).
   const addWordWithRelated = useCallback(
-    async (sr, ru, example, relatedSelections, mainTagNames) => {
+    async (sr, ru, example, relatedSelections, mainTagNames, groupIds) => {
       const mainWord = await addWord(sr, ru, example);
       if (!mainWord) return false;
       // Tracks words created earlier in this same call (like importWords'
@@ -361,11 +391,16 @@ export default function App() {
           if (!(await tagWord(word.id, name))) failedTags += 1;
         }
       }
-      if (failedRelatedWords || failedLinks || failedTags) {
+      let failedGroups = 0;
+      for (const groupId of groupIds || []) {
+        if (!(await shareWordToGroup(mainWord.id, groupId))) failedGroups += 1;
+      }
+      if (failedRelatedWords || failedLinks || failedTags || failedGroups) {
         const parts = [];
         if (failedRelatedWords) parts.push(`${failedRelatedWords} сродних речи`);
         if (failedLinks) parts.push(`${failedLinks} веза`);
         if (failedTags) parts.push(`${failedTags} тагова`);
+        if (failedGroups) parts.push(`${failedGroups} група`);
         setStorageError(`„${sr}“ је сачувана, али није све остало: ${parts.join(', ')}.`);
       }
       // The main word's part of speech was already suggested on the form
@@ -376,7 +411,7 @@ export default function App() {
       });
       return true;
     },
-    [addWord, linkWords, tagWord, autoTagPartOfSpeech, words]
+    [addWord, linkWords, tagWord, shareWordToGroup, autoTagPartOfSpeech, words]
   );
 
   // Imports a parsed JSON backup (see parseImportData). Deliberately
@@ -480,6 +515,57 @@ export default function App() {
     );
   }, []);
 
+  const unshareWordFromGroup = useCallback(async (wordId, groupId) => {
+    const { error } = await api.unshareWordFromGroup(wordId, groupId);
+    if (error) {
+      setStorageError('Не могу да уклоним реч из групе.');
+      return;
+    }
+    setStorageError(null);
+    setWords((prev) =>
+      prev.map((w) => (w.id === wordId ? { ...w, groupIds: w.groupIds.filter((gid) => gid !== groupId) } : w))
+    );
+  }, []);
+
+  const createGroup = useCallback(async (name) => {
+    const { data, error } = await api.createGroup(name);
+    if (error || !data) {
+      setStorageError('Не могу да направим групу.');
+      return null;
+    }
+    setStorageError(null);
+    setGroups((prev) => [...prev, data]);
+    return data;
+  }, []);
+
+  const joinGroup = useCallback(async (code) => {
+    const { data, error } = await api.joinGroup(code);
+    if (error || !data) {
+      setStorageError('Не могу да се придружим групи — проверите код.');
+      return null;
+    }
+    setStorageError(null);
+    setGroups((prev) => (prev.some((g) => g.id === data.id) ? prev : [...prev, data]));
+    return data;
+  }, []);
+
+  // A word visible only through this group (not owned by me) needs to
+  // actually disappear from `words` once I leave — reconciling that by hand
+  // from existing state is fiddly and error-prone, a full reload is simplest.
+  const leaveGroup = useCallback(
+    async (groupId) => {
+      const { error } = await api.leaveGroup(groupId);
+      if (error) {
+        setStorageError('Не могу да напустим групу.');
+        return;
+      }
+      setStorageError(null);
+      setGroups((prev) => prev.filter((g) => g.id !== groupId));
+      await reloadAll();
+    },
+    [reloadAll]
+  );
+
   // authed === null means the initial getSession() check hasn't resolved yet
   // — render nothing rather than flashing the login form for one frame.
   if (authed === null) return null;
@@ -505,7 +591,7 @@ export default function App() {
     >
       <div className="max-w-2xl mx-auto px-5 py-8">
         <Header onLogout={async () => (await getSupabase()).auth.signOut()} />
-        <TabBar tab={tab} setTab={setTab} count={words.length} />
+        <TabBar tab={tab} setTab={setTab} count={words.length} groupCount={groups.length} />
 
         {!ready ? (
           <div className="text-center py-20" style={{ color: '#8892AE' }}>
@@ -513,11 +599,12 @@ export default function App() {
           </div>
         ) : (
           <>
-            {tab === 'practice' && <Practice words={words} tags={tags} onAnswer={recordAnswer} />}
+            {tab === 'practice' && <Practice words={words} tags={tags} groups={groups} onAnswer={recordAnswer} />}
             {tab === 'words' && (
               <WordsList
                 words={words}
                 tags={tags}
+                groups={groups}
                 onDelete={deleteWord}
                 onUpdate={updateWord}
                 onLink={linkWords}
@@ -526,10 +613,21 @@ export default function App() {
                 onUntag={untagWord}
                 onImport={importWords}
                 onDetectPartsOfSpeech={detectPartsOfSpeech}
+                onShareToGroup={shareWordToGroup}
+                onUnshareFromGroup={unshareWordFromGroup}
               />
             )}
             {tab === 'add' && (
-              <AddWord onAdd={addWordWithRelated} goToList={() => setTab('words')} words={words} tags={tags} />
+              <AddWord
+                onAdd={addWordWithRelated}
+                goToList={() => setTab('words')}
+                words={words}
+                tags={tags}
+                groups={groups}
+              />
+            )}
+            {tab === 'groups' && (
+              <Groups groups={groups} onCreate={createGroup} onJoin={joinGroup} onLeave={leaveGroup} />
             )}
           </>
         )}
@@ -585,11 +683,12 @@ function Header({ onLogout }) {
   );
 }
 
-function TabBar({ tab, setTab, count }) {
+function TabBar({ tab, setTab, count, groupCount }) {
   const tabs = [
     { id: 'practice', label: 'Вежбање' },
     { id: 'words', label: `Речи${count ? ` · ${count}` : ''}` },
     { id: 'add', label: 'Додај' },
+    { id: 'groups', label: `Групе${groupCount ? ` · ${groupCount}` : ''}` },
   ];
   return (
     <div
