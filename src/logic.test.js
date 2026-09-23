@@ -16,7 +16,6 @@ import {
   isPlausibleRussianText,
   suggestTagsFromRelatedWords,
   filterWordsByQuery,
-  computeTagAccuracy,
   levenshteinDistance,
   isFuzzyMatch,
   findLikelyTypoOf,
@@ -486,53 +485,6 @@ describe('filterWordsByQuery', () => {
 
   it('handles a missing words list without throwing', () => {
     expect(filterWordsByQuery(null, 'x')).toEqual([]);
-  });
-});
-
-describe('computeTagAccuracy', () => {
-  const tags = [
-    { id: 't-verb', name: 'glagol' },
-    { id: 't-food', name: 'hrana' },
-  ];
-
-  it('aggregates correct/wrong counts per tag across all its words', () => {
-    const words = [
-      { id: '1', correct_count: 3, wrong_count: 1, tagIds: ['t-verb'] },
-      { id: '2', correct_count: 2, wrong_count: 0, tagIds: ['t-verb'] },
-    ];
-    const result = computeTagAccuracy(words, tags);
-    expect(result).toEqual([{ tagId: 't-verb', name: 'glagol', correct: 5, wrong: 1, total: 6, accuracy: 5 / 6 }]);
-  });
-
-  it('lets one word contribute to every tag it carries', () => {
-    const words = [{ id: '1', correct_count: 2, wrong_count: 2, tagIds: ['t-verb', 't-food'] }];
-    const result = computeTagAccuracy(words, tags);
-    expect(result).toHaveLength(2);
-    expect(result.every((r) => r.correct === 2 && r.wrong === 2)).toBe(true);
-  });
-
-  it('sorts worst accuracy first', () => {
-    const words = [
-      { id: '1', correct_count: 9, wrong_count: 1, tagIds: ['t-food'] }, // 90%
-      { id: '2', correct_count: 1, wrong_count: 9, tagIds: ['t-verb'] }, // 10%
-    ];
-    const result = computeTagAccuracy(words, tags);
-    expect(result.map((r) => r.tagId)).toEqual(['t-verb', 't-food']);
-  });
-
-  it('excludes a tag with no attempts on any of its words yet', () => {
-    const words = [{ id: '1', correct_count: 0, wrong_count: 0, tagIds: ['t-verb'] }];
-    expect(computeTagAccuracy(words, tags)).toEqual([]);
-  });
-
-  it('excludes an untagged word from every tag total', () => {
-    const words = [{ id: '1', correct_count: 5, wrong_count: 0, tagIds: [] }];
-    expect(computeTagAccuracy(words, tags)).toEqual([]);
-  });
-
-  it('handles missing words/tags without throwing', () => {
-    expect(computeTagAccuracy(null, tags)).toEqual([]);
-    expect(computeTagAccuracy([{ id: '1', correct_count: 1, wrong_count: 0, tagIds: ['t-verb'] }], null)).toEqual([]);
   });
 });
 

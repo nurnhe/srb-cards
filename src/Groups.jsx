@@ -128,6 +128,9 @@ function JoinGroupForm({ onJoin }) {
   );
 }
 
+// Given its own clearly-labeled block rather than sharing a row with the
+// leave-group button — the two used to sit at equal visual weight, which
+// made the invite code easy to miss.
 function InviteCode({ code }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -141,16 +144,27 @@ function InviteCode({ code }) {
     }
   };
   return (
-    <button
-      type="button"
-      onClick={copy}
-      className="inline-flex items-center gap-1.5 rounded-md px-2 py-1"
-      style={{ fontFamily: FONT_MONO, fontSize: '0.78rem', color: '#D4A54A', background: '#12192E', border: '1px solid #2A3355' }}
-      title="Копирај код за позивницу"
+    <div
+      className="rounded-lg px-3.5 py-3 flex items-center justify-between gap-3"
+      style={{ background: '#12192E', border: '1px dashed #3A4570' }}
     >
-      {code}
-      {copied ? <Check size={13} /> : <Copy size={13} />}
-    </button>
+      <div className="flex flex-col gap-1.5 min-w-0">
+        <span style={{ color: '#8892AE', fontSize: '0.68rem', fontFamily: FONT_MONO, letterSpacing: 1 }}>
+          ПОЗИВНИЦА — ПОШАЉИ ОВАЈ КОД
+        </span>
+        <span style={{ fontFamily: FONT_MONO, fontSize: '1.1rem', letterSpacing: 2, color: '#D4A54A', fontWeight: 700 }}>
+          {code}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={copy}
+        className="rounded-lg px-3.5 py-1.5 text-xs font-semibold flex items-center gap-1.5 shrink-0"
+        style={{ fontFamily: FONT_BODY, background: '#D4A54A', color: '#12192E' }}
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Копирано' : 'Копирај'}
+      </button>
+    </div>
   );
 }
 
@@ -203,20 +217,19 @@ export function Groups({ groups, onCreate, onJoin, onLeave }) {
             return (
               <div
                 key={g.id}
-                className="rounded-xl px-4 py-3 flex flex-col gap-1.5"
+                className="rounded-xl px-4 py-3 flex flex-col gap-3"
                 style={{ background: '#1B2440', border: '1px solid #2A3355' }}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <Users size={16} color="#8892AE" className="shrink-0" />
-                    <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>{g.name}</span>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {details[g.id]?.invite_code && <InviteCode code={details[g.id].invite_code} />}
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Users size={16} color="#8892AE" className="shrink-0" />
+                      <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>{g.name}</span>
+                    </div>
                     <button
                       type="button"
                       onClick={() => onLeave(g.id)}
-                      className="p-2 rounded-md"
+                      className="p-2 rounded-md shrink-0"
                       style={{ color: '#8892AE' }}
                       aria-label={`Напусти групу ${g.name}`}
                       title="Напусти групу"
@@ -224,16 +237,17 @@ export function Groups({ groups, onCreate, onJoin, onLeave }) {
                       <LogOut size={15} />
                     </button>
                   </div>
+                  {members.length > 0 && (
+                    <p style={{ color: '#5C6690', fontSize: '0.78rem', paddingLeft: 25 }}>
+                      Чланови:{' '}
+                      {members
+                        .map((m) => (m.mine ? 'ти' : m.email))
+                        .filter(Boolean)
+                        .join(', ')}
+                    </p>
+                  )}
                 </div>
-                {members.length > 0 && (
-                  <p style={{ color: '#5C6690', fontSize: '0.78rem', paddingLeft: 25 }}>
-                    Чланови:{' '}
-                    {members
-                      .map((m) => (m.mine ? 'ти' : m.email))
-                      .filter(Boolean)
-                      .join(', ')}
-                  </p>
-                )}
+                {details[g.id]?.invite_code && <InviteCode code={details[g.id].invite_code} />}
               </div>
             );
           })}
