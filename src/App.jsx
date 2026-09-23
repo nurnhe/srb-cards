@@ -613,6 +613,8 @@ export default function App() {
                 onUntag={untagWord}
                 onImport={importWords}
                 onDetectPartsOfSpeech={detectPartsOfSpeech}
+                onShareToGroup={shareWordToGroup}
+                onUnshareFromGroup={unshareWordFromGroup}
               />
             )}
             {tab === 'add' && (

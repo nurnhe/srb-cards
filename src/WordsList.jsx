@@ -1,7 +1,7 @@
 // Moved out of App.jsx unchanged (part of the file split).
 
 import React, { useRef, useState } from 'react';
-import { Download, Loader2, Upload, Tag, Percent, Table2, Link2, Pencil, Trash2 } from 'lucide-react';
+import { Download, Loader2, Upload, Tag, Percent, Table2, Link2, Pencil, Trash2, Users } from 'lucide-react';
 import { FONT_MONO, FONT_DISPLAY, FONT_BODY } from './theme';
 import { fetchInflectionTables } from './wiktionary';
 import {
@@ -58,7 +58,21 @@ function TagAccuracyPanel({ words, tags }) {
   );
 }
 
-export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onUnlink, onTag, onUntag, onImport, onDetectPartsOfSpeech }) {
+export function WordsList({
+  words,
+  tags,
+  groups,
+  onDelete,
+  onUpdate,
+  onLink,
+  onUnlink,
+  onTag,
+  onUntag,
+  onImport,
+  onDetectPartsOfSpeech,
+  onShareToGroup,
+  onUnshareFromGroup,
+}) {
   const [scope, setScope] = useState('all'); // 'all' | 'mine' | a group id
   const [editingId, setEditingId] = useState(null);
   const [editSr, setEditSr] = useState('');
@@ -68,6 +82,7 @@ export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onU
   const [linkQuery, setLinkQuery] = useState('');
   const [taggingId, setTaggingId] = useState(null); // word currently picking/creating a tag
   const [tagQuery, setTagQuery] = useState('');
+  const [sharingId, setSharingId] = useState(null); // word currently picking a group to share with
   const [inflectionId, setInflectionId] = useState(null); // word currently showing its declension/conjugation table
   const [inflectionTables, setInflectionTables] = useState(null);
   const [inflectionState, setInflectionState] = useState('idle'); // idle | loading | notfound | error
@@ -192,6 +207,7 @@ export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onU
   const searched = filterWordsByQuery(filtered, searchQuery);
   const byId = Object.fromEntries(words.map((w) => [w.id, w]));
   const tagById = Object.fromEntries((tags || []).map((t) => [t.id, t]));
+  const groupById = Object.fromEntries((groups || []).map((g) => [g.id, g]));
 
   // Part-of-speech tags (glagol, imenica...) are shown as small badges rather
   // than full tag pills — they land on almost every word now, so treating
@@ -224,6 +240,7 @@ export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onU
     setTaggingId(null);
     setInflectionId(null);
     setDeletingId(null);
+    setSharingId(null);
   };
 
   const saveEdit = async () => {
@@ -253,6 +270,7 @@ export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onU
     setTaggingId(null);
     setInflectionId(null);
     setDeletingId(null);
+    setSharingId(null);
   };
 
   const startTagging = (id) => {
@@ -264,6 +282,20 @@ export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onU
     setTagQuery('');
     setEditingId(null);
     setLinkingId(null);
+    setInflectionId(null);
+    setDeletingId(null);
+    setSharingId(null);
+  };
+
+  const startSharing = (id) => {
+    if (sharingId === id) {
+      setSharingId(null);
+      return;
+    }
+    setSharingId(id);
+    setEditingId(null);
+    setLinkingId(null);
+    setTaggingId(null);
     setInflectionId(null);
     setDeletingId(null);
   };
@@ -281,6 +313,7 @@ export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onU
     setLinkingId(null);
     setTaggingId(null);
     setDeletingId(null);
+    setSharingId(null);
     setInflectionTables(null);
     setInflectionState('loading');
     try {
@@ -312,6 +345,7 @@ export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onU
     setLinkingId(null);
     setTaggingId(null);
     setInflectionId(null);
+    setSharingId(null);
   };
 
   return (
@@ -480,6 +514,7 @@ export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onU
         const wordTags = w.tagIds.map((tid) => tagById[tid]).filter(Boolean);
         const wordPosTags = wordTags.filter((t) => posTagIds.has(t.id));
         const wordCustomTags = wordTags.filter((t) => !posTagIds.has(t.id));
+        const wordGroups = (w.groupIds || []).map((gid) => groupById[gid]).filter(Boolean);
         const cardTagsExpanded = expandedCardTags.has(w.id);
         return (
           <div
@@ -622,6 +657,31 @@ export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onU
                       )}
                     </div>
                   )}
+                  {wordGroups.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      {wordGroups.map((g) => (
+                        <span
+                          key={g.id}
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                          style={{
+                            background: '#12293A',
+                            color: '#6FB3D8',
+                            fontSize: '0.72rem',
+                            fontFamily: FONT_MONO,
+                          }}
+                        >
+                          {g.name}
+                          <button
+                            onClick={() => onUnshareFromGroup(w.id, g.id)}
+                            aria-label={`Уклони из групе ${g.name}`}
+                            style={{ color: '#4A7E9C', lineHeight: 1 }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-col items-end gap-1.5 shrink-0">
                   <WordStats correct={w.correct_count} wrong={w.wrong_count} />
@@ -644,6 +704,17 @@ export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onU
                     >
                       <Tag size={15} />
                     </button>
+                    {groups && groups.length > 0 && (
+                      <button
+                        onClick={() => startSharing(w.id)}
+                        className="p-2 rounded-md"
+                        style={{ color: sharingId === w.id ? '#D4A54A' : '#8892AE' }}
+                        aria-label="Подели са групом"
+                        title="Подели са групом"
+                      >
+                        <Users size={15} />
+                      </button>
+                    )}
                     <button
                       onClick={() => startLinking(w.id)}
                       className="p-2 rounded-md"
@@ -700,6 +771,15 @@ export function WordsList({ words, tags, groups, onDelete, onUpdate, onLink, onU
                   setTagQuery('');
                 }}
                 onCancel={() => setTaggingId(null)}
+              />
+            )}
+
+            {sharingId === w.id && (
+              <GroupSharePicker
+                word={w}
+                allGroups={groups || []}
+                onPick={(groupId) => onShareToGroup(w.id, groupId)}
+                onCancel={() => setSharingId(null)}
               />
             )}
 
@@ -830,6 +910,46 @@ function TagPicker({ word, allTags, tagById, query, onQueryChange, onPick, onCan
         {candidates.length === 0 && !query.trim() && (
           <div style={{ color: '#5C6690', fontSize: '0.8rem', padding: '4px 2px' }}>
             Још нема тагова — упиши да направиш први.
+          </div>
+        )}
+      </div>
+      <button
+        onClick={onCancel}
+        className="text-xs font-semibold rounded-md px-3 py-1.5 mt-2"
+        style={{ background: '#2A3355', color: '#8892AE' }}
+      >
+        Затвори
+      </button>
+    </div>
+  );
+}
+
+// Groups a word isn't already shared to — no search box (a person's group
+// count is small) and no "create new" affordance (creating a group is a
+// bigger action, done from the Groups tab, not inline here).
+function GroupSharePicker({ word, allGroups, onPick, onCancel }) {
+  const alreadyShared = new Set(word.groupIds);
+  const candidates = allGroups.filter((g) => !alreadyShared.has(g.id));
+
+  return (
+    <div className="rounded-lg p-3" style={{ background: '#12192E', border: '1px solid #3A4570' }}>
+      <div style={{ color: '#8892AE', fontSize: '0.78rem', marginBottom: 6 }}>
+        Подели <span style={{ color: '#F5F1E8', fontWeight: 600 }}>{word.sr}</span> са групом:
+      </div>
+      <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
+        {candidates.map((g) => (
+          <button
+            key={g.id}
+            onClick={() => onPick(g.id)}
+            className="text-left rounded-md px-2.5 py-1.5"
+            style={{ background: '#1B2440', color: '#6FB3D8', fontSize: '0.85rem' }}
+          >
+            {g.name}
+          </button>
+        ))}
+        {candidates.length === 0 && (
+          <div style={{ color: '#5C6690', fontSize: '0.8rem', padding: '4px 2px' }}>
+            Већ подељено са свим твојим групама.
           </div>
         )}
       </div>
