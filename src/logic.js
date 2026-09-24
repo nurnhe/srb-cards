@@ -195,48 +195,70 @@ function wordWeight(w) {
   return 1 + Math.min(netStruggle, MAX_STRUGGLE_WEIGHT);
 }
 
+// Lays out one pass of the practice deck: each word appears `wordWeight`
+// times, and a word's copies are spread evenly across the pass rather than
+// bunched together.
+//
+// The previous version placed every copy of a word exactly two cards after
+// the one before ("d e d e d e b a b a b a ..."), so two words took turns
+// for several cards in a row — the "same words over and over" bug. It hit
+// hardest when many words weigh the same, e.g. someone who just joined a
+// study group, for whom every shared word is still unpracticed (weight 3).
+//
+// How it works now: every word earns "credit" at a rate equal to its
+// weight, and each card goes to the word with the most credit, which then
+// pays for it. A weight-6 word therefore comes up about every sixth of the
+// pass, and when all words weigh the same, every word appears once before
+// any word repeats. Each word starts at a random point in its own rhythm,
+// so the hardest word isn't always the first card.
+//
+// Two rules sit on top of that. The same word is never picked twice in a
+// row, and a pick is skipped if it would leave the rest of the pass unable
+// to avoid back-to-back repeats. When one word outweighs all the others
+// combined, some repeats can't be avoided; then the word with the most
+// copies left goes next, which keeps those repeats to the minimum.
 export function buildWeightedDeck(pool) {
-  const counts = shuffle(pool).map((w) => [w.id, wordWeight(w)]);
-  // Round-robin placement by descending weight — same technique as the
-  // "reorganize string" problem — guarantees no two adjacent copies of the
-  // same id whenever that's mathematically possible (i.e. whenever no
-  // single id's weight exceeds half the deck, rounded up). A shuffle
-  // followed by ad-hoc adjacent-swapping can't always achieve that: with
-  // one very-hard word at max weight (6) among several clean ones, a
-  // one-pass swap can run out of distinct neighbors to swap with even
-  // though a fully non-adjacent arrangement exists. Pool order is shuffled
-  // first so ties in weight don't always resolve the same way.
-  counts.sort((a, b) => b[1] - a[1]);
-  const total = counts.reduce((sum, [, weight]) => sum + weight, 0);
-  const deck = new Array(total);
-  let index = 0;
-  counts.forEach(([id, weight]) => {
-    for (let i = 0; i < weight; i++) {
-      deck[index] = id;
-      index += 2;
-      if (index >= total) index = 1;
-    }
+  const words = shuffle(pool).map((w) => ({ id: w.id, weight: wordWeight(w) }));
+  const total = words.reduce((sum, w) => sum + w.weight, 0);
+  words.forEach((w) => {
+    w.left = w.weight;
+    w.credit = -Math.random() * total;
   });
-  // The placement above always seats the single highest-weight word at
-  // index 0 — that's just what the first assignment the loop ever makes
-  // happens to be, not something tied to the shuffle. Left as-is, whichever
-  // word has the most net wrong answers would start *every single cycle*
-  // deterministically, forever — not just appear more often within a
-  // cycle, but literally always be the very next card right after you
-  // finish one. That's arguably the biggest source of "same word over and
-  // over": a 100%-certain event, not a weighted-but-still-random one.
-  // Rotating the finished deck by a random offset spreads the starting
-  // point across the whole thing instead. It's only safe when the deck
-  // doesn't *end* on the same id it starts with — rotation turns that
-  // particular pair into a new adjacent pair, and a word whose weight sits
-  // exactly at the no-adjacent-repeat ceiling (ceil(total/2)) necessarily
-  // both opens and closes the arrangement (e.g. "ababa"), so any rotation
-  // there would recreate the exact violation the round-robin placement
-  // exists to prevent. Every other pair the rotation touches is already
-  // proven non-adjacent, unchanged from the original arrangement.
-  if (total > 1 && deck[0] !== deck[total - 1]) {
-    const offset = 1 + Math.floor(Math.random() * (total - 1));
-    return deck.slice(offset).concat(deck.slice(0, offset));
+  const deck = [];
+  let last = null;
+  for (let slots = total; slots > 0; slots--) {
+    // The two words with the most copies left — enough to tell whether a
+    // pick leaves the rest of the pass able to avoid repeats: after it,
+    // no word may need more than half the remaining slots (rounded up),
+    // and the word just picked, which can't go next, no more than half
+    // rounded down.
+    let most = null;
+    let second = null;
+    words.forEach((w) => {
+      if (!most || w.left > most.left) [most, second] = [w, most];
+      else if (!second || w.left > second.left) second = w;
+    });
+    const slotsAfter = slots - 1;
+    const keepsRestRepeatFree = (w) => {
+      const mostOfOthers = w === most ? second?.left || 0 : most.left;
+      return w.left - 1 <= Math.floor(slotsAfter / 2) && mostOfOthers <= Math.ceil(slotsAfter / 2);
+    };
+
+    let pick = null;
+    words.forEach((w) => {
+      w.credit += w.weight;
+      if (w.left > 0 && w !== last && keepsRestRepeatFree(w) && (!pick || w.credit > pick.credit)) pick = w;
+    });
+    if (!pick) {
+      words.forEach((w) => {
+        if (w.left > 0 && w !== last && (!pick || w.left > pick.left)) pick = w;
+      });
+    }
+    if (!pick) pick = last; // only this one word has copies left
+    pick.credit -= total;
+    pick.left -= 1;
+    last = pick;
+    deck.push(pick.id);
   }
   return deck;
 }
