@@ -273,6 +273,62 @@ describe('buildWeightedDeck', () => {
       expect(violations).toBeLessThanOrEqual(4);
     }
   });
+
+  // Regression for "Practice is broken — the same words keep repeating over
+  // and over". Every copy of a word used to be placed exactly two slots
+  // after the previous one, so two words took turns for several cards in a
+  // row ("d e d e d e b a b a b a ..."). It showed up most for words nobody
+  // has practiced yet — which is every word someone sees right after
+  // joining a study group, since practice counts are per person.
+  it('shows every word once before repeating any, when all words weigh the same (e.g. all brand-new)', () => {
+    const pool = Array.from({ length: 8 }, (_, i) => ({ id: `w${i}`, correct_count: 0, wrong_count: 0 }));
+    for (let trial = 0; trial < 200; trial++) {
+      const deck = buildWeightedDeck(pool);
+      expect(deck).toHaveLength(24); // 3 copies each
+      // each stretch of 8 cards is all 8 different words
+      for (let start = 0; start < deck.length; start += 8) {
+        expect(new Set(deck.slice(start, start + 8)).size).toBe(8);
+      }
+    }
+  });
+
+  it('spreads a hard word’s extra copies across the deck instead of every other card', () => {
+    const pool = [
+      { id: 'hard', correct_count: 0, wrong_count: 5 }, // weight 6
+      ...Array.from({ length: 15 }, (_, i) => ({ id: `k${i}`, correct_count: 3, wrong_count: 0 })),
+    ];
+    // 21 cards, 6 of them "hard" — evenly spread that's one every 3-4
+    // cards. The old layout put all 6 on every other card (gaps of 2,
+    // bunched into 11 cards); now at most one gap is that short, and the
+    // copies stretch across most of the pass.
+    for (let trial = 0; trial < 500; trial++) {
+      const deck = buildWeightedDeck(pool);
+      const at = deck.map((id, i) => (id === 'hard' ? i : -1)).filter((i) => i >= 0);
+      expect(at).toHaveLength(6);
+      const shortGaps = at.slice(1).filter((pos, j) => pos - at[j] < 3).length;
+      expect(shortGaps).toBeLessThanOrEqual(1);
+      expect(at[5] - at[0]).toBeGreaterThanOrEqual(15);
+    }
+  });
+
+  it('never puts the same word twice in a row when that can be avoided, for any mix of weights', () => {
+    for (let trial = 0; trial < 2000; trial++) {
+      const n = 1 + Math.floor(Math.random() * 10);
+      const pool = Array.from({ length: n }, (_, i) => ({
+        id: `w${i}`,
+        correct_count: Math.floor(Math.random() * 3),
+        wrong_count: Math.floor(Math.random() * 8),
+      }));
+      const deck = buildWeightedDeck(pool);
+      const copies = {};
+      deck.forEach((id) => (copies[id] = (copies[id] || 0) + 1));
+      const most = Math.max(...Object.values(copies));
+      const unavoidable = Math.max(0, most - (deck.length - most) - 1);
+      let violations = 0;
+      for (let j = 1; j < deck.length; j++) if (deck[j] === deck[j - 1]) violations++;
+      expect(violations).toBe(unavoidable);
+    }
+  });
 });
 
 describe('requeueMissedWord', () => {
@@ -352,6 +408,17 @@ describe('requeueMissedWord', () => {
       worstCase = Math.min(worstCase, seen.size);
     }
     expect(worstCase).toBeGreaterThan(15);
+  });
+
+  it('with all correct answers, a round of practice on brand-new words shows each word once (the reported repeat bug)', () => {
+    // Practice's real draw loop with nothing requeued: the first 20 cards
+    // from 20 never-practiced words must be 20 different words.
+    const pool = Array.from({ length: 20 }, (_, i) => ({ id: `w${i}`, correct_count: 0, wrong_count: 0 }));
+    for (let trial = 0; trial < 50; trial++) {
+      const deck = buildWeightedDeck(pool);
+      const firstRound = deck.slice(0, 20);
+      expect(new Set(firstRound).size).toBe(20);
+    }
   });
 });
 

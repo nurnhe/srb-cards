@@ -400,10 +400,15 @@ the test database) in the same change.
   `mergeVariants` splits anything typed or picked with a comma into separate
   chips, so no translation ever contains a comma. `VariantsEditor` component manages this as
   chips in the UI.
-- **Practice deck**: `Practice` draws from a shuffled "deck" (Fisher–Yates)
-  that guarantees every word in the current pool appears once before any
-  repeat, rather than pure `Math.random()` each draw. The pool can be
-  narrowed by tag via `TagScopeBar`.
+- **Practice deck**: `Practice` draws from a "deck" (`buildWeightedDeck` in
+  `logic.js`) rather than pure `Math.random()` each draw. Harder words (more
+  wrong than right answers, from the person's *own* counts) and never-practiced
+  words get extra copies, and each word's copies are spread evenly through the
+  deck — when all words weigh the same, every word appears once before any
+  repeats. A missed word is also slipped back in later (`requeueMissedWord`).
+  The pool can be narrowed by tag via `TagScopeBar`. (Until 2026-09-24 copies
+  were placed two cards apart, so pairs of words alternated — the "same words
+  over and over" bug; the regression tests in `logic.test.js` guard this.)
 - **Design tokens**: dark navy background `#12192E`, card surface `#1B2440`,
   borders `#2A3355`, accent red `#C41E3A`, gold accent `#D4A54A`. Fonts: PT
   Serif (display), Inter (body), JetBrains Mono (labels/stats), loaded via a

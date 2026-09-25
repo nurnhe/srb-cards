@@ -139,8 +139,8 @@ export default function App() {
   }, []);
 
   // Records a practice attempt for a word — increments correct_count or
-  // wrong_count. The backend reads the current value and writes it back; fine
-  // for single-user use, not built for concurrent editors.
+  // wrong_count. These are the signed-in person's own counts (word_progress),
+  // even on a word shared with a group; the server bumps them in one step.
   const recordAnswer = useCallback(async (id, isCorrect) => {
     const field = isCorrect ? 'correct_count' : 'wrong_count';
     // Bump the count locally first so the card reacts instantly, then settle on
