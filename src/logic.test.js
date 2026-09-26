@@ -33,6 +33,7 @@ import {
   partOfSpeechTagIds,
   rankTagsByUsage,
   scopeWords,
+  describeSaveError,
 } from './logic';
 
 describe('isCyrillic', () => {
@@ -1161,3 +1162,23 @@ describe('scopeWords', () => {
   });
 });
 
+
+describe('describeSaveError', () => {
+  it('names the field and its limit when the server said something was too long', () => {
+    const error = Object.assign(new Error('sr is too long'), { code: 'too_long', field: 'sr', max: 100 });
+    expect(describeSaveError(error, 'fallback')).toBe('Предугачак текст: „Реч“ може имати највише 100 знакова.');
+  });
+
+  it('has a label for every field the server can limit', () => {
+    for (const [field, label] of [['ru', 'Превод'], ['example', 'Пример'], ['tag', 'Таг'], ['group', 'Име групе']]) {
+      const error = Object.assign(new Error('x'), { code: 'too_long', field, max: 7 });
+      expect(describeSaveError(error, 'fallback')).toContain(`„${label}“`);
+    }
+  });
+
+  it('falls back for any other failure, including a missing error', () => {
+    expect(describeSaveError(new Error('HTTP 500'), 'fallback')).toBe('fallback');
+    expect(describeSaveError(null, 'fallback')).toBe('fallback');
+    expect(describeSaveError(Object.assign(new Error('x'), { code: 'too_long', field: 'nope', max: 1 }), 'fallback')).toBe('fallback');
+  });
+});

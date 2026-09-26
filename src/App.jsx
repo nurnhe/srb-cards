@@ -17,6 +17,7 @@ import {
   findDuplicateWord,
   parseImportData,
   wordsNeedingPartOfSpeech,
+  describeSaveError,
 } from './logic';
 
 export default function App() {
@@ -118,7 +119,7 @@ export default function App() {
   const addWord = useCallback(async (sr, ru, example) => {
     const { data, error } = await api.createWord(sr, ru, example);
     if (error || !data) {
-      setStorageError('Не могу да сачувам реч.');
+      setStorageError(describeSaveError(error, 'Не могу да сачувам реч.'));
       return null;
     }
     setStorageError(null);
@@ -129,7 +130,7 @@ export default function App() {
   const updateWord = useCallback(async (id, sr, ru, example) => {
     const { data, error } = await api.updateWord(id, sr, ru, example);
     if (error || !data) {
-      setStorageError('Не могу да сачувам измене.');
+      setStorageError(describeSaveError(error, 'Не могу да сачувам измене.'));
       return null;
     }
     setStorageError(null);
@@ -221,7 +222,7 @@ export default function App() {
   const tagWord = useCallback(async (wordId, tagName) => {
     const { data, error } = await api.tagWord(wordId, tagName);
     if (error || !data?.tag) {
-      setStorageError('Не могу да додам таг.');
+      setStorageError(describeSaveError(error, 'Не могу да додам таг.'));
       return false;
     }
     setStorageError(null);
@@ -530,7 +531,7 @@ export default function App() {
   const createGroup = useCallback(async (name) => {
     const { data, error } = await api.createGroup(name);
     if (error || !data) {
-      setStorageError('Не могу да направим групу.');
+      setStorageError(describeSaveError(error, 'Не могу да направим групу.'));
       return null;
     }
     setStorageError(null);

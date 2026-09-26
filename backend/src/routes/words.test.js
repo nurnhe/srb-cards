@@ -253,7 +253,9 @@ describe('POST /api/words length limits', () => {
     const { supabase, calls } = fakeWordsTable({ error: null });
     const res = await withApp(supabase, (base) => postJson(base, '/', body));
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/too long/);
+    const json = await res.json();
+    expect(json.error).toMatch(/too long/);
+    expect(json).toMatchObject({ code: 'too_long', field: _field, max: { sr: 100, ru: 300, example: 500 }[_field] });
     expect(calls.reached).toBe(false);
   });
 
@@ -301,6 +303,6 @@ describe('POST /api/words/:id/tags length limit', () => {
   it('rejects a tag name over 50 characters with 400', async () => {
     const res = await withApp({}, (base) => postJson(base, `/${WORD_ID}/tags`, { name: 'a'.repeat(51) }));
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/too long/);
+    expect(await res.json()).toMatchObject({ code: 'too_long', field: 'tag', max: 50 });
   });
 });

@@ -68,12 +68,19 @@ export function cleanWordFields({ sr, ru, example }) {
 // after any Cyrillic-to-Latin conversion (the stored form).
 export const LIMITS = { sr: 100, ru: 300, example: 500, tag: 50, group: 100 };
 
-// Returns a message naming the first field over its limit, or null if all fit.
-export function tooLongMessage({ sr, ru, example }) {
-  if (sr.length > LIMITS.sr) return `sr is too long (max ${LIMITS.sr} characters)`;
-  if (ru.length > LIMITS.ru) return `ru is too long (max ${LIMITS.ru} characters)`;
-  if (example && example.length > LIMITS.example) return `example is too long (max ${LIMITS.example} characters)`;
+// Name of the first word field over its limit ('sr' | 'ru' | 'example'), or
+// null if all fit.
+export function tooLongField({ sr, ru, example }) {
+  if (sr.length > LIMITS.sr) return 'sr';
+  if (ru.length > LIMITS.ru) return 'ru';
+  if (example && example.length > LIMITS.example) return 'example';
   return null;
+}
+
+// The 400 body for an over-long field. `code`/`field`/`max` let the browser
+// say exactly what's wrong in Serbian instead of a generic "not saved".
+export function tooLongBody(field) {
+  return { error: `${field} is too long (max ${LIMITS[field]} characters)`, code: 'too_long', field, max: LIMITS[field] };
 }
 
 // Postgres's error code for "would break a unique index" — here, saving a

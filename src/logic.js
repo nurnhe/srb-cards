@@ -655,3 +655,15 @@ export function scopeWords(words, scope) {
   return (words || []).filter((w) => (w.groupIds || []).includes(scope));
 }
 
+
+// What to tell the person when the server refused to save something. A field
+// over its length limit (server answers 400 with code 'too_long') gets a
+// specific message naming the field and its limit — retrying would never
+// help there — anything else gets the given generic fallback.
+const TOO_LONG_LABELS = { sr: 'Реч', ru: 'Превод', example: 'Пример', tag: 'Таг', group: 'Име групе' };
+export function describeSaveError(error, fallback) {
+  if (error?.code === 'too_long' && TOO_LONG_LABELS[error.field]) {
+    return `Предугачак текст: „${TOO_LONG_LABELS[error.field]}“ може имати највише ${error.max} знакова.`;
+  }
+  return fallback;
+}

@@ -128,6 +128,7 @@ describe('POST /api/groups name limit', () => {
       fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'a'.repeat(101) }) })
     );
     expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'too_long', field: 'group', max: 100 });
     expect(called).toBe(false);
   });
 });

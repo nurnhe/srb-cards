@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { ensureTag } from '../tags.js';
-import { route, fail, cleanWordFields, isValidId, tooLongMessage, LIMITS, UNIQUE_VIOLATION } from '../http.js';
+import { route, fail, cleanWordFields, isValidId, tooLongField, tooLongBody, LIMITS, UNIQUE_VIOLATION } from '../http.js';
 
 const router = Router();
 
@@ -21,8 +21,8 @@ router.post(
     if (!fields.sr || !fields.ru) {
       return res.status(400).json({ error: 'sr and ru are required' });
     }
-    const tooLong = tooLongMessage(fields);
-    if (tooLong) return res.status(400).json({ error: tooLong });
+    const tooLong = tooLongField(fields);
+    if (tooLong) return res.status(400).json(tooLongBody(tooLong));
 
     // Generated here instead of left to the column's default(gen_random_uuid())
     // and read back via .select().single() (INSERT ... RETURNING) — that
@@ -61,8 +61,8 @@ router.patch(
     if (!fields.sr || !fields.ru) {
       return res.status(400).json({ error: 'sr and ru are required' });
     }
-    const tooLong = tooLongMessage(fields);
-    if (tooLong) return res.status(400).json({ error: tooLong });
+    const tooLong = tooLongField(fields);
+    if (tooLong) return res.status(400).json(tooLongBody(tooLong));
 
     // { count: 'exact' } asks PostgREST for how many rows matched, via a
     // separate `Prefer: count=exact` header — NOT the same as .select(),
@@ -136,7 +136,7 @@ router.post(
       return res.status(400).json({ error: 'name is required' });
     }
     if (String(req.body.name).trim().length > LIMITS.tag) {
-      return res.status(400).json({ error: `name is too long (max ${LIMITS.tag} characters)` });
+      return res.status(400).json(tooLongBody('tag'));
     }
     const { tag, created, error: tagError } = await ensureTag(req.supabase, req.userId, req.body.name);
     if (tagError || !tag) return fail(res, 'POST /api/words/:id/tags', tagError);

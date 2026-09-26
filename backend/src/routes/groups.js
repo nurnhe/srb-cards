@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { route, fail, isValidId, LIMITS } from '../http.js';
+import { route, fail, isValidId, LIMITS, tooLongBody } from '../http.js';
 
 const router = Router();
 router.param('id', (req, res, next, id) => (isValidId(id) ? next() : res.status(400).json({ error: 'invalid id' })));
@@ -70,7 +70,7 @@ router.post(
     const name = String(req.body?.name ?? '').trim();
     if (!name) return res.status(400).json({ error: 'name is required' });
     if (name.length > LIMITS.group) {
-      return res.status(400).json({ error: `name is too long (max ${LIMITS.group} characters)` });
+      return res.status(400).json(tooLongBody('group'));
     }
     const { data, error } = await req.supabase.rpc('create_group', { p_name: name });
     if (error) return fail(res, 'POST /api/groups', error);

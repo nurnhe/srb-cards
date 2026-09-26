@@ -816,7 +816,7 @@ export function AddWord({ onAdd, goToList, words, tags, groups }) {
         </button>
         {saveFailed && (
           <span style={{ color: '#E28B95', fontSize: '0.85rem', fontFamily: FONT_BODY }}>
-            Није сачувано — покушај поново (унето је остало).
+            Није сачувано — унето је остало (разлог је наведен на дну).
           </span>
         )}
         {justAdded && (
