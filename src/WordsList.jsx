@@ -577,7 +577,7 @@ export function WordsList({
                 </div>
               </div>
             ) : (
-              <div className="flex items-start gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap" style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem', overflowWrap: 'anywhere' }}>
                     {w.sr}
@@ -688,7 +688,7 @@ export function WordsList({
                     </div>
                   )}
                 </div>
-                <div className="flex flex-col items-end gap-1.5 shrink-0">
+                <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-1.5 sm:shrink-0">
                   <WordStats correct={w.correct_count} wrong={w.wrong_count} />
                   <div className="flex gap-1">
                     <button

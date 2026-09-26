@@ -405,7 +405,7 @@ export function AddWord({ onAdd, goToList, words, tags, groups }) {
           ово стварно нова реч, слободно настави.
         </p>
       ) : otherScript(sr) ? (
-        <p style={{ color: '#5C6690', fontSize: '0.78rem', marginBottom: 12 }}>
+        <p style={{ color: '#5C6690', fontSize: '0.78rem', marginBottom: 12, overflowWrap: 'anywhere' }}>
           Друго писмо: <span style={{ color: '#8892AE' }}>{otherScript(sr)}</span> — додаје се
           аутоматски, обе варијанте важе на картици.
         </p>
