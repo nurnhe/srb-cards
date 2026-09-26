@@ -435,16 +435,17 @@ Wiktionary changes its page markup.
 
 These deliberately did **not** move behind the backend: they have nothing to do
 with the database, and the two Wiktionary helpers parse HTML with `DOMParser`,
-which needs a browser. Worth revisiting later — Tatoeba and Glosbe are
-unofficial endpoints that may be CORS-blocked in the browser today, and a server
-would not be.
+which needs a browser.
 
 - **MyMemory** (`api.mymemory.translated.net`) — free, CORS-enabled,
   translation suggestions for the "Предложи" button. Machine-translated,
   quality varies; presented as suggestions to review, not auto-accepted.
-- **Tatoeba** + **Glosbe** (fallback) — best-effort Serbian example
-  sentence lookup. Coverage for Serbian is thin; frequently finds nothing,
-  and that's expected, not a bug. Manual entry is the reliable fallback.
+- **Tatoeba** (`api.tatoeba.org/unstable/sentences`) — best-effort Serbian
+  example sentence lookup. Coverage for Serbian is thin; frequently finds
+  nothing, and that's expected, not a bug. Manual entry is the reliable
+  fallback. (The old `tatoeba.org/eng/api_v0` address and Glosbe were both
+  unreachable from a browser — no CORS permission / blocked — so the lookup
+  silently never worked until 2026-09-26; Glosbe was removed.)
 
 ## Where the backlog lives
 
