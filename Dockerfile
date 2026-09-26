@@ -38,7 +38,7 @@ CMD ["/usr/local/bin/entrypoint.sh"]
 # Release build: Vite turns the source into a static site in /app/dist.
 FROM deps AS build
 
-COPY index.html vite.config.js ./
+COPY index.html vite.config.js tailwind.config.js postcss.config.js ./
 COPY src ./src
 RUN npm run build
 
