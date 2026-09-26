@@ -7,7 +7,13 @@ this app stores her vocabulary and quizzes her on it.
 
 - React, built with Vite: `src/App.jsx` is the app shell and data handling; the
   screens and shared pieces are in their own files (see "Key conventions")
-- Styling: inline styles + Tailwind utility classes (no custom Tailwind config)
+- Styling: inline styles + Tailwind CSS v3 utility classes. Tailwind is a real
+  build dependency (`tailwind.config.js`, `postcss.config.js`, `src/index.css`) —
+  it used to be loaded from `cdn.tailwindcss.com`, which isn't meant for
+  production. The release `Dockerfile` copies both config files into the build
+  stage; if you add another config file the build needs, copy it there too or the
+  live site comes out unstyled. Kept on v3 on purpose: v4 changes defaults
+  (borders, rings) and would shift the layout.
 - Backend: Node + Express in `backend/`, talks to Supabase with
   `@supabase/supabase-js`. The browser never touches the database directly for
   data — it calls `/api/*` through `src/api.js`. It does talk to Supabase Auth
