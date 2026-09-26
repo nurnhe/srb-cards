@@ -249,6 +249,8 @@ $$;
 -- Indexes for the lookups the security rules and deletes rely on ---------------
 -- (tags is covered by its unique index above, which starts with user_id)
 create index if not exists words_user_id_idx           on public.words (user_id);
+-- One person can't save the same Serbian word twice (migration 011).
+create unique index if not exists words_user_sr_unique_idx on public.words (user_id, lower(sr));
 create index if not exists word_tags_tag_id_idx        on public.word_tags (tag_id);
 create index if not exists word_links_related_word_idx on public.word_links (related_word_id);
 create index if not exists group_members_user_id_idx   on public.group_members (user_id);

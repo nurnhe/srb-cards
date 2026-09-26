@@ -221,3 +221,86 @@ describe('PATCH /api/words/:id', () => {
     expect(res.status).toBe(500);
   });
 });
+
+// ---- length limits and duplicate-word protection ----------------------------
+
+const postJson = (base, path, body, method = 'POST') =>
+  fetch(`${base}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+// A fake supabase whose insert/update resolves with the given result, and which
+// records whether the database was reached at all.
+function fakeWordsTable(result) {
+  const calls = { reached: false };
+  const builder = {
+    insert: () => {
+      calls.reached = true;
+      return Promise.resolve(result);
+    },
+    update: () => {
+      calls.reached = true;
+      return { eq: () => Promise.resolve({ ...result, count: 1 }) };
+    },
+  };
+  return { supabase: { from: () => builder }, calls };
+}
+
+describe('POST /api/words length limits', () => {
+  it.each([
+    ['sr', { sr: 'a'.repeat(101), ru: 'x' }],
+    ['ru', { sr: 'x', ru: 'a'.repeat(301) }],
+    ['example', { sr: 'x', ru: 'y', example: 'a'.repeat(501) }],
+  ])('rejects an over-long %s with 400 without touching the database', async (_field, body) => {
+    const { supabase, calls } = fakeWordsTable({ error: null });
+    const res = await withApp(supabase, (base) => postJson(base, '/', body));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/too long/);
+    expect(calls.reached).toBe(false);
+  });
+
+  it('accepts text exactly at the limits', async () => {
+    const { supabase } = fakeWordsTable({ error: null });
+    const res = await withApp(supabase, (base) =>
+      postJson(base, '/', { sr: 'a'.repeat(100), ru: 'б'.repeat(300), example: 'c'.repeat(500) })
+    );
+    expect(res.status).toBe(201);
+  });
+});
+
+describe('PATCH /api/words/:id length limits', () => {
+  it('rejects an over-long sr with 400', async () => {
+    const { supabase, calls } = fakeWordsTable({ error: null });
+    const res = await withApp(supabase, (base) => postJson(base, `/${WORD_ID}`, { sr: 'a'.repeat(101), ru: 'x' }, 'PATCH'));
+    expect(res.status).toBe(400);
+    expect(calls.reached).toBe(false);
+  });
+});
+
+describe('duplicate words', () => {
+  const duplicate = { error: { code: '23505', message: 'duplicate key value violates unique constraint' } };
+
+  it('POST answers 409 when the database says the word already exists', async () => {
+    const { supabase } = fakeWordsTable(duplicate);
+    const res = await withApp(supabase, (base) => postJson(base, '/', { sr: 'hvala', ru: 'спасибо' }));
+    expect(res.status).toBe(409);
+  });
+
+  it('PATCH answers 409 when the edit would collide with another of your words', async () => {
+    const { supabase } = fakeWordsTable(duplicate);
+    const res = await withApp(supabase, (base) => postJson(base, `/${WORD_ID}`, { sr: 'hvala', ru: 'спасибо' }, 'PATCH'));
+    expect(res.status).toBe(409);
+  });
+
+  it('any other database error is still a 500', async () => {
+    const { supabase } = fakeWordsTable({ error: { code: '42501', message: 'rls' } });
+    const res = await withApp(supabase, (base) => postJson(base, '/', { sr: 'hvala', ru: 'спасибо' }));
+    expect(res.status).toBe(500);
+  });
+});
+
+describe('POST /api/words/:id/tags length limit', () => {
+  it('rejects a tag name over 50 characters with 400', async () => {
+    const res = await withApp({}, (base) => postJson(base, `/${WORD_ID}/tags`, { name: 'a'.repeat(51) }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/too long/);
+  });
+});

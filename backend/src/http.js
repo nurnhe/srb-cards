@@ -61,6 +61,25 @@ export function cleanWordFields({ sr, ru, example }) {
   };
 }
 
+// Longest text each field accepts. Generous for real use (a vocabulary word,
+// a translation list, a usage sentence, a tag or group name) but far below
+// the 5 MB request cap, which is otherwise the only thing stopping someone
+// saving a whole book into one word. Checked after trimming and, for sr,
+// after any Cyrillic-to-Latin conversion (the stored form).
+export const LIMITS = { sr: 100, ru: 300, example: 500, tag: 50, group: 100 };
+
+// Returns a message naming the first field over its limit, or null if all fit.
+export function tooLongMessage({ sr, ru, example }) {
+  if (sr.length > LIMITS.sr) return `sr is too long (max ${LIMITS.sr} characters)`;
+  if (ru.length > LIMITS.ru) return `ru is too long (max ${LIMITS.ru} characters)`;
+  if (example && example.length > LIMITS.example) return `example is too long (max ${LIMITS.example} characters)`;
+  return null;
+}
+
+// Postgres's error code for "would break a unique index" — here, saving a
+// second word with the same Serbian spelling (see migration 011).
+export const UNIQUE_VIOLATION = '23505';
+
 // user_id is selected for server-side use only (attachOwnership in shape.js
 // turns it into a `mine` boolean before a word ever reaches the client — see
 // that file's comment for why). correct_count/wrong_count no longer live on

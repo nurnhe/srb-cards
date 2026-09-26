@@ -178,6 +178,12 @@ Conventions worth keeping:
   that's genuinely the row Postgres saved; `words`' create/edit routes build
   the response from what they already know instead of reading the row back
   (see the RLS + `RETURNING` gotcha in the schema notes below for why).
+- Text length is capped on the server (`LIMITS` in `backend/src/http.js`): sr
+  100, ru 300, example 500, tag name 50, group name 100 characters — over the
+  limit is a 400 before the database is touched. Saving a second word with the
+  same Serbian spelling (per person, case-insensitive) is refused by a unique
+  index (migration `011`) and answered 409; the browser's own duplicate check
+  still catches the normal case first.
 - Supabase returns at most **1000 rows per request**, silently cutting the rest
   off. `GET /api/vocabulary` therefore reads each table page by page
   (`fetchAllRows` in `backend/src/http.js`, always with a full ordering). Any

@@ -23,6 +23,7 @@ function) predates this record; it is described in `../schema.sql`.
 | 008_migrate_word_progress_data.sql | backfills word_progress from words' existing counters | probably run — verify (query below) | run |
 | 009_drop_word_count_columns.sql | drops words.correct_count/wrong_count + increment_word_answer — **run only after confirming the new backend is deployed and working** | not run | not run |
 | 010_group_member_emails.sql | adds group_member_emails() so a member can see who else is in a group | run (confirmed 2026-09-26) | run |
+| 011_unique_word_per_person.sql | one person can't save the same Serbian word twice (check for existing duplicates first — query in the file) | not run | not run |
 
 Update the two right-hand columns when a file is run.
 
