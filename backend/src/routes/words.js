@@ -42,7 +42,7 @@ router.post(
     const id = crypto.randomUUID();
     const { error } = await req.supabase.from('words').insert({ id, ...fields, user_id: req.userId });
     if (error) {
-      if (error.code === UNIQUE_VIOLATION) return fail(res, 'POST /api/words', error, 409);
+      if (error.code === UNIQUE_VIOLATION) return fail(res, 'POST /api/words', error, 409, { code: 'duplicate' });
       return fail(res, 'POST /api/words', error);
     }
 
@@ -76,7 +76,7 @@ router.patch(
       .update(fields, { count: 'exact' })
       .eq('id', req.params.id);
     if (error) {
-      if (error.code === UNIQUE_VIOLATION) return fail(res, 'PATCH /api/words/:id', error, 409);
+      if (error.code === UNIQUE_VIOLATION) return fail(res, 'PATCH /api/words/:id', error, 409, { code: 'duplicate' });
       return fail(res, 'PATCH /api/words/:id', error);
     }
     if (!count) return fail(res, 'PATCH /api/words/:id', new Error('Word not found'), 404);

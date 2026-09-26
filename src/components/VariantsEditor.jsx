@@ -67,9 +67,9 @@ export function VariantsEditor({ variants, onChange, srWord }) {
             <span
               key={v}
               className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
-              style={{ background: '#F5F1E8', color: '#1C2333', fontSize: '0.85rem' }}
+              style={{ background: '#F5F1E8', color: '#1C2333', fontSize: '0.85rem', maxWidth: '100%' }}
             >
-              {v}
+              <span style={{ overflowWrap: 'anywhere', minWidth: 0 }}>{v}</span>
               <button
                 type="button"
                 onClick={() => removeVariant(v)}

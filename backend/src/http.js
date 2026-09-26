@@ -12,13 +12,13 @@ export function route(handler) {
 // Logs the full Postgres error object, not just .message — an RLS rejection's
 // .details/.hint/.code often say exactly which values it tried and why
 // (e.g. the failing row's actual column values), which .message alone omits.
-export function fail(res, where, error, status = 500) {
+export function fail(res, where, error, status = 500, extra = {}) {
   if (error && typeof error === 'object') {
     console.error(`[${where}]`, { message: error.message, code: error.code, details: error.details, hint: error.hint });
   } else {
     console.error(`[${where}]`, error);
   }
-  return res.status(status).json({ error: error?.message || 'Database error' });
+  return res.status(status).json({ error: error?.message || 'Database error', ...extra });
 }
 
 // A non-string value (an object/array from a malformed request) used to get

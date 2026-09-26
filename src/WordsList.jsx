@@ -588,7 +588,7 @@ export function WordsList({
                     ))}
                   </div>
                   {otherScript(w.sr) && (
-                    <div style={{ color: '#5C6690', fontSize: '0.78rem', marginTop: 1 }}>
+                    <div style={{ color: '#5C6690', fontSize: '0.78rem', marginTop: 1, overflowWrap: 'anywhere' }}>
                       {otherScript(w.sr)}
                     </div>
                   )}

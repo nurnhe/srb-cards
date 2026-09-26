@@ -50,7 +50,7 @@ function CreateGroupForm({ onCreate }) {
           }}
           placeholder="нпр. Српски четвртком"
           autoComplete="off"
-          className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
+          className="flex-1 min-w-0 rounded-lg px-3.5 py-2.5 outline-none"
           style={INPUT_STYLE}
         />
         <button
@@ -107,7 +107,7 @@ function JoinGroupForm({ onJoin }) {
           }}
           placeholder="нпр. AB12CD34"
           autoComplete="off"
-          className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
+          className="flex-1 min-w-0 rounded-lg px-3.5 py-2.5 outline-none"
           style={{ ...INPUT_STYLE, fontFamily: FONT_MONO, letterSpacing: 1 }}
         />
         <button
@@ -247,7 +247,9 @@ export function Groups({ groups, onCreate, onJoin, onLeave }) {
                     </p>
                   )}
                 </div>
-                {details[g.id]?.invite_code && <InviteCode code={details[g.id].invite_code} />}
+                {(details[g.id]?.invite_code || g.invite_code) && (
+                  <InviteCode code={details[g.id]?.invite_code || g.invite_code} />
+                )}
               </div>
             );
           })}

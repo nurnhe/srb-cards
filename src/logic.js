@@ -662,6 +662,9 @@ export function scopeWords(words, scope) {
 // help there — anything else gets the given generic fallback.
 const TOO_LONG_LABELS = { sr: 'Реч', ru: 'Превод', example: 'Пример', tag: 'Таг', group: 'Име групе' };
 export function describeSaveError(error, fallback) {
+  if (error?.code === 'duplicate') {
+    return 'Таква реч већ постоји — дупликат се не може сачувати.';
+  }
   if (error?.code === 'too_long' && TOO_LONG_LABELS[error.field]) {
     return `Предугачак текст: „${TOO_LONG_LABELS[error.field]}“ може имати највише ${error.max} знакова.`;
   }

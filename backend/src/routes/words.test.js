@@ -284,12 +284,14 @@ describe('duplicate words', () => {
     const { supabase } = fakeWordsTable(duplicate);
     const res = await withApp(supabase, (base) => postJson(base, '/', { sr: 'hvala', ru: 'спасибо' }));
     expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('duplicate');
   });
 
   it('PATCH answers 409 when the edit would collide with another of your words', async () => {
     const { supabase } = fakeWordsTable(duplicate);
     const res = await withApp(supabase, (base) => postJson(base, `/${WORD_ID}`, { sr: 'hvala', ru: 'спасибо' }, 'PATCH'));
     expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('duplicate');
   });
 
   it('any other database error is still a 500', async () => {

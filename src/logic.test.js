@@ -1176,6 +1176,11 @@ describe('describeSaveError', () => {
     }
   });
 
+  it('says the word already exists when the server refused a duplicate', () => {
+    const error = Object.assign(new Error('duplicate key value violates unique constraint'), { code: 'duplicate' });
+    expect(describeSaveError(error, 'fallback')).toBe('Таква реч већ постоји — дупликат се не може сачувати.');
+  });
+
   it('falls back for any other failure, including a missing error', () => {
     expect(describeSaveError(new Error('HTTP 500'), 'fallback')).toBe('fallback');
     expect(describeSaveError(null, 'fallback')).toBe('fallback');

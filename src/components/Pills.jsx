@@ -45,6 +45,9 @@ export function TagFilterPill({ active, label, onClick }) {
       className="px-2.5 py-1 rounded-full text-xs"
       style={{
         fontFamily: FONT_MONO,
+        maxWidth: '100%',
+        overflowWrap: 'anywhere',
+        textAlign: 'left',
         background: active ? '#D4A54A' : '#1B2440',
         color: active ? '#12192E' : '#8892AE',
         border: active ? '1px solid #D4A54A' : '1px solid #2A3355',
