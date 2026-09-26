@@ -120,6 +120,19 @@ describe('POST /api/groups', () => {
   });
 });
 
+describe('POST /api/groups name limit', () => {
+  it('rejects a group name over 100 characters with 400 without calling the database', async () => {
+    let called = false;
+    const fakeSupabase = { rpc: () => { called = true; return Promise.resolve({ data: null, error: null }); } };
+    const res = await withApp(fakeSupabase, 'me', (base) =>
+      fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'a'.repeat(101) }) })
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'too_long', field: 'group', max: 100 });
+    expect(called).toBe(false);
+  });
+});
+
 describe('POST /api/groups/join', () => {
   it('joins via the join_group_by_code RPC', async () => {
     let rpcArgs = null;

@@ -38,7 +38,10 @@ async function request(path, { method = 'GET', body } = {}) {
     }
     if (!res.ok) {
       const payload = await res.json().catch(() => null);
-      return { data: null, error: new Error(payload?.error || `HTTP ${res.status}`) };
+      const error = new Error(payload?.error || `HTTP ${res.status}`);
+      // Lets callers tell "too long" (field + max) apart from a plain failure.
+      if (payload?.code) Object.assign(error, { code: payload.code, field: payload.field, max: payload.max });
+      return { data: null, error };
     }
     if (res.status === 204) return { data: null, error: null };
     return { data: await res.json(), error: null };

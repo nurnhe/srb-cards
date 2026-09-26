@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { ensureTag } from '../tags.js';
-import { route, fail, cleanWordFields, isValidId } from '../http.js';
+import { route, fail, cleanWordFields, isValidId, tooLongField, tooLongBody, LIMITS, UNIQUE_VIOLATION } from '../http.js';
 
 const router = Router();
 
@@ -21,6 +21,8 @@ router.post(
     if (!fields.sr || !fields.ru) {
       return res.status(400).json({ error: 'sr and ru are required' });
     }
+    const tooLong = tooLongField(fields);
+    if (tooLong) return res.status(400).json(tooLongBody(tooLong));
 
     // Generated here instead of left to the column's default(gen_random_uuid())
     // and read back via .select().single() (INSERT ... RETURNING) — that
@@ -39,7 +41,10 @@ router.post(
     // we already know every field we'd otherwise be reading back.
     const id = crypto.randomUUID();
     const { error } = await req.supabase.from('words').insert({ id, ...fields, user_id: req.userId });
-    if (error) return fail(res, 'POST /api/words', error);
+    if (error) {
+      if (error.code === UNIQUE_VIOLATION) return fail(res, 'POST /api/words', error, 409, { code: 'duplicate' });
+      return fail(res, 'POST /api/words', error);
+    }
 
     // A word you just created is trivially yours — no query needed to know
     // that. user_id itself is never sent to the client (see attachOwnership
@@ -56,6 +61,8 @@ router.patch(
     if (!fields.sr || !fields.ru) {
       return res.status(400).json({ error: 'sr and ru are required' });
     }
+    const tooLong = tooLongField(fields);
+    if (tooLong) return res.status(400).json(tooLongBody(tooLong));
 
     // { count: 'exact' } asks PostgREST for how many rows matched, via a
     // separate `Prefer: count=exact` header — NOT the same as .select(),
@@ -68,7 +75,10 @@ router.patch(
       .from('words')
       .update(fields, { count: 'exact' })
       .eq('id', req.params.id);
-    if (error) return fail(res, 'PATCH /api/words/:id', error);
+    if (error) {
+      if (error.code === UNIQUE_VIOLATION) return fail(res, 'PATCH /api/words/:id', error, 409, { code: 'duplicate' });
+      return fail(res, 'PATCH /api/words/:id', error);
+    }
     if (!count) return fail(res, 'PATCH /api/words/:id', new Error('Word not found'), 404);
 
     // Ownership doesn't change on edit; we already know every field we just
@@ -124,6 +134,9 @@ router.post(
   route(async (req, res) => {
     if (!String(req.body?.name ?? '').trim()) {
       return res.status(400).json({ error: 'name is required' });
+    }
+    if (String(req.body.name).trim().length > LIMITS.tag) {
+      return res.status(400).json(tooLongBody('tag'));
     }
     const { tag, created, error: tagError } = await ensureTag(req.supabase, req.userId, req.body.name);
     if (tagError || !tag) return fail(res, 'POST /api/words/:id/tags', tagError);

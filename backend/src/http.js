@@ -12,13 +12,13 @@ export function route(handler) {
 // Logs the full Postgres error object, not just .message — an RLS rejection's
 // .details/.hint/.code often say exactly which values it tried and why
 // (e.g. the failing row's actual column values), which .message alone omits.
-export function fail(res, where, error, status = 500) {
+export function fail(res, where, error, status = 500, extra = {}) {
   if (error && typeof error === 'object') {
     console.error(`[${where}]`, { message: error.message, code: error.code, details: error.details, hint: error.hint });
   } else {
     console.error(`[${where}]`, error);
   }
-  return res.status(status).json({ error: error?.message || 'Database error' });
+  return res.status(status).json({ error: error?.message || 'Database error', ...extra });
 }
 
 // A non-string value (an object/array from a malformed request) used to get
@@ -60,6 +60,32 @@ export function cleanWordFields({ sr, ru, example }) {
     example: capitalizeFirst(cleanField(example)) || null,
   };
 }
+
+// Longest text each field accepts. Generous for real use (a vocabulary word,
+// a translation list, a usage sentence, a tag or group name) but far below
+// the 5 MB request cap, which is otherwise the only thing stopping someone
+// saving a whole book into one word. Checked after trimming and, for sr,
+// after any Cyrillic-to-Latin conversion (the stored form).
+export const LIMITS = { sr: 100, ru: 300, example: 500, tag: 50, group: 100 };
+
+// Name of the first word field over its limit ('sr' | 'ru' | 'example'), or
+// null if all fit.
+export function tooLongField({ sr, ru, example }) {
+  if (sr.length > LIMITS.sr) return 'sr';
+  if (ru.length > LIMITS.ru) return 'ru';
+  if (example && example.length > LIMITS.example) return 'example';
+  return null;
+}
+
+// The 400 body for an over-long field. `code`/`field`/`max` let the browser
+// say exactly what's wrong in Serbian instead of a generic "not saved".
+export function tooLongBody(field) {
+  return { error: `${field} is too long (max ${LIMITS[field]} characters)`, code: 'too_long', field, max: LIMITS[field] };
+}
+
+// Postgres's error code for "would break a unique index" — here, saving a
+// second word with the same Serbian spelling (see migration 011).
+export const UNIQUE_VIOLATION = '23505';
 
 // user_id is selected for server-side use only (attachOwnership in shape.js
 // turns it into a `mine` boolean before a word ever reaches the client — see

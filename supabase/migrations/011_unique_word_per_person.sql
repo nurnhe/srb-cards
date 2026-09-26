@@ -1,0 +1,23 @@
+-- 011: one person can't save the same Serbian word twice.
+--
+-- Until now the "this word already exists" check lived only in the browser, so
+-- two tabs or devices adding the same word at the same moment could both
+-- succeed. This makes the database refuse the second one (the backend answers
+-- with 409 "already exists").
+--
+-- BEFORE running this, check for duplicates that are already saved — the index
+-- cannot be created while any exist (it fails with an error and changes
+-- nothing, so trying is safe, but you'd have to clean them up first):
+--
+--   select user_id, lower(sr) as word, count(*) as copies, array_agg(id) as ids
+--   from public.words
+--   group by user_id, lower(sr)
+--   having count(*) > 1;
+--
+-- No rows back = nothing to clean up. Otherwise delete the extra copies in the
+-- app (keep the one with the most practice history), then run this.
+--
+-- Per person on purpose: two people may each own their own copy of a word (a
+-- shared word is still one row, so sharing never trips this).
+create unique index if not exists words_user_sr_unique_idx
+  on public.words (user_id, lower(sr));

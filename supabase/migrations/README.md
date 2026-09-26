@@ -19,10 +19,11 @@ function) predates this record; it is described in `../schema.sql`.
 | 004_require_owner.sql | owner column mandatory | reported done — verify (query below) | built from schema.sql |
 | 005_indexes.sql | three indexes | run | run |
 | 006_study_groups_tables.sql | groups, group_members, word_groups, word_progress tables + helper functions | run (confirmed 2026-09-26) | run |
-| 007_expand_word_visibility.sql | broadens words/word_links/word_tags RLS to include shared-group access | probably run — verify (query below) | run |
-| 008_migrate_word_progress_data.sql | backfills word_progress from words' existing counters | probably run — verify (query below) | run |
+| 007_expand_word_visibility.sql | broadens words/word_links/word_tags RLS to include shared-group access | run (confirmed 2026-09-26: separate insert/select/update/delete policies) | run |
+| 008_migrate_word_progress_data.sql | backfills word_progress from words' existing counters | run (confirmed 2026-09-26: strict check below returned 0 missing) | run |
 | 009_drop_word_count_columns.sql | drops words.correct_count/wrong_count + increment_word_answer — **run only after confirming the new backend is deployed and working** | not run | not run |
 | 010_group_member_emails.sql | adds group_member_emails() so a member can see who else is in a group | run (confirmed 2026-09-26) | run |
+| 011_unique_word_per_person.sql | one person can't save the same Serbian word twice (check for existing duplicates first — query in the file) | run (2026-09-26, no duplicates found first) | run |
 
 Update the two right-hand columns when a file is run.
 
@@ -60,11 +61,14 @@ select policyname, cmd from pg_policies
 where schemaname = 'public' and tablename = 'words' order by 1;
 ```
 
-Practice stats copied over (008) — the two numbers should be roughly equal
-(words with any practice history, versus per-person stats rows):
+Practice stats copied over (008) — should return 0 (words that have old
+practice counts but no matching per-person stats row for their owner):
 
 ```sql
-select
-  (select count(*) from words where coalesce(correct_count, 0) + coalesce(wrong_count, 0) > 0) as words_with_history,
-  (select count(*) from word_progress) as progress_rows;
+select count(*) as missing
+from words w
+where coalesce(w.correct_count, 0) + coalesce(w.wrong_count, 0) > 0
+  and not exists (
+    select 1 from word_progress p where p.word_id = w.id and p.user_id = w.user_id
+  );
 ```
