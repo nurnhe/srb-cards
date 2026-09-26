@@ -113,8 +113,9 @@ case "$(container_state)" in
     echo "Creating the container…"
     # The anonymous volumes on the two node_modules folders keep the container's
     # own Linux-built dependencies visible underneath the bind mount.
-    # Ports are published on 127.0.0.1 only: the backend holds the Supabase
-    # service key and has no login, so it must not be reachable from outside.
+    # Ports are published on 127.0.0.1 only: there is no rate-limiting or abuse
+    # protection in front of the API and Supabase sign-in, so the app must not
+    # be reachable from outside this machine.
     docker run -d \
       --name "$CONTAINER" \
       -v "$PWD":/app \

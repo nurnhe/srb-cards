@@ -1,4 +1,4 @@
-// Lookups against outside websites (Wiktionary, MyMemory, Tatoeba, Glosbe) and
+// Lookups against outside websites (Wiktionary, MyMemory, Tatoeba) and
 // the browser's speech voices. Everything here is best-effort: a word that isn't
 // found is an expected result, not a bug. Moved out of App.jsx unchanged.
 
@@ -13,48 +13,23 @@ import {
 
 // Best-effort lookup of a plain Serbian example sentence from the free
 // Tatoeba sentence corpus (no translation required — just usage in context).
-async function fetchExampleFromTatoeba(srWord) {
-  const url = `https://tatoeba.org/eng/api_v0/search?from=srp&query=${encodeURIComponent(srWord)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('tatoeba request failed');
-  const json = await res.json();
-  const results = json.results || [];
-  const withText = results.find((r) => r.text);
-  return withText ? withText.text : null;
-}
-
-// Fallback source: Glosbe's translation-memory endpoint, which pulls from
-// parallel corpora and often has broader (if messier) Serbian coverage than
-// Tatoeba. This is an unofficial/undocumented endpoint, so it's wrapped
-// defensively — if it changes or gets blocked, we just fall through.
-async function fetchExampleFromGlosbe(srWord) {
-  const url = `https://glosbe.com/gapi/tm?from=srp&dest=eng&format=json&pretty=true&phrase=${encodeURIComponent(
-    srWord
-  )}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('glosbe request failed');
-  const json = await res.json();
-  const tm = json.tm || [];
-  const withText = tm.find((t) => t.phrase && t.phrase.trim());
-  return withText ? withText.phrase.trim() : null;
-}
-
-// Tries Tatoeba first, then Glosbe as a fallback. Returns null if neither
-// source has anything — that's expected fairly often for Serbian.
+// Uses Tatoeba's newer API host, which allows requests from a browser; the
+// older tatoeba.org/eng/api_v0 address redirects without the permission
+// header browsers require, so it was silently blocked. Returns null if
+// nothing is found — that's expected fairly often for Serbian.
 export async function fetchExample(srWord) {
   try {
-    const fromTatoeba = await fetchExampleFromTatoeba(srWord);
-    if (fromTatoeba) return fromTatoeba;
+    const url = `https://api.tatoeba.org/unstable/sentences?lang=srp&q=${encodeURIComponent(
+      srWord
+    )}&sort=relevance&limit=5`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const withText = (json.data || []).find((r) => r.text && r.text.trim());
+    return withText ? withText.text.trim() : null;
   } catch (e) {
-    // fall through to the next source
+    return null;
   }
-  try {
-    const fromGlosbe = await fetchExampleFromGlosbe(srWord);
-    if (fromGlosbe) return fromGlosbe;
-  } catch (e) {
-    // both sources failed or found nothing
-  }
-  return null;
 }
 
 // ---- Reading Wiktionary pages --------------------------------------------
