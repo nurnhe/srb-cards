@@ -27,7 +27,7 @@ function CreateGroupForm({ onCreate }) {
     try {
       const created = await onCreate(name.trim());
       if (!created) {
-        setError('Не могу да направим групу — покушај поново.');
+        setError('Група није направљена — разлог је наведен на дну.');
         return;
       }
       setName('');
@@ -224,7 +224,7 @@ export function Groups({ groups, onCreate, onJoin, onLeave }) {
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <Users size={16} color="#8892AE" className="shrink-0" />
-                      <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>{g.name}</span>
+                      <span style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem', overflowWrap: 'anywhere' }}>{g.name}</span>
                     </div>
                     <button
                       type="button"

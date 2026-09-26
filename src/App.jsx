@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { BookMarked, LogOut, Users } from 'lucide-react';
 import * as api from './api';
 import {
@@ -219,9 +219,13 @@ export default function App() {
   // and tells us which tag it used, so we never guess an id here. Returns
   // whether it actually saved — see linkWords' comment for why callers
   // doing several of these in a row need to know.
+  // The most recent failed tag save's error, so a batch summary (see
+  // addWordWithRelated) can name a too-long tag instead of just counting it.
+  const lastTagError = useRef(null);
   const tagWord = useCallback(async (wordId, tagName) => {
     const { data, error } = await api.tagWord(wordId, tagName);
     if (error || !data?.tag) {
+      lastTagError.current = error;
       setStorageError(describeSaveError(error, 'Не могу да додам таг.'));
       return false;
     }
@@ -342,6 +346,7 @@ export default function App() {
     async (sr, ru, example, relatedSelections, mainTagNames, groupIds) => {
       const mainWord = await addWord(sr, ru, example);
       if (!mainWord) return false;
+      lastTagError.current = null;
       // Tracks words created earlier in this same call (like importWords'
       // `known`) — checking against the closed-over `words` state alone
       // would miss a related word just created a few iterations ago, since
@@ -402,7 +407,8 @@ export default function App() {
         if (failedLinks) parts.push(`${failedLinks} веза`);
         if (failedTags) parts.push(`${failedTags} тагова`);
         if (failedGroups) parts.push(`${failedGroups} група`);
-        setStorageError(`„${sr}“ је сачувана, али није све остало: ${parts.join(', ')}.`);
+        const tagReason = failedTags ? describeSaveError(lastTagError.current, '') : '';
+        setStorageError(`„${sr}“ је сачувана, али није све остало: ${parts.join(', ')}.${tagReason ? ` ${tagReason}` : ''}`);
       }
       // The main word's part of speech was already suggested on the form
       // while typing (and could be changed there); related words created

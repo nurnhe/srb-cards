@@ -72,7 +72,21 @@ export function WordsList({
   const [posProgress, setPosProgress] = useState({ done: 0, total: 0 });
   const [posMessage, setPosMessage] = useState('');
   const [showMenu, setShowMenu] = useState(false); // the "⋯" overflow menu (export/import/detect POS)
+  // Which edge of the "⋯" button the menu lines up with: it opens to the
+  // right of the button when there's room for it on screen, otherwise it is
+  // pulled back to the left so it never runs past the page edge.
+  const [menuAlign, setMenuAlign] = useState('left');
+  const menuButtonRef = useRef(null);
   const importFileRef = useRef(null);
+  const MENU_WIDTH = 230;
+
+  const toggleMenu = () => {
+    if (!showMenu && menuButtonRef.current) {
+      const { left } = menuButtonRef.current.getBoundingClientRect();
+      setMenuAlign(left + MENU_WIDTH <= window.innerWidth - 8 ? 'left' : 'right');
+    }
+    setShowMenu((v) => !v);
+  };
 
   const runPartOfSpeechDetection = async () => {
     if (posState === 'running') return;
@@ -323,7 +337,8 @@ export function WordsList({
         <div style={{ position: 'relative' }}>
           <button
             type="button"
-            onClick={() => setShowMenu((v) => !v)}
+            ref={menuButtonRef}
+            onClick={toggleMenu}
             aria-label="Још опција"
             aria-expanded={showMenu}
             style={{
@@ -345,8 +360,8 @@ export function WordsList({
               style={{
                 position: 'absolute',
                 top: 'calc(100% + 8px)',
-                left: 0,
-                width: 230,
+                ...(menuAlign === 'left' ? { left: 0 } : { right: 0 }),
+                width: MENU_WIDTH,
                 borderRadius: 12,
                 background: '#1B2440',
                 border: '1px solid #3A4570',
@@ -564,7 +579,7 @@ export function WordsList({
             ) : (
               <div className="flex items-start gap-3">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5" style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem' }}>
+                  <div className="flex items-center gap-1.5 flex-wrap" style={{ fontFamily: FONT_DISPLAY, color: '#F5F1E8', fontSize: '1rem', overflowWrap: 'anywhere' }}>
                     {w.sr}
                     <PronounceButton text={w.sr} size={14} />
                     <IpaText text={w.sr} />
@@ -577,7 +592,7 @@ export function WordsList({
                       {otherScript(w.sr)}
                     </div>
                   )}
-                  <div style={{ color: '#8892AE', fontSize: '0.85rem', marginTop: 3 }}>{w.ru}</div>
+                  <div style={{ color: '#8892AE', fontSize: '0.85rem', marginTop: 3, overflowWrap: 'anywhere' }}>{w.ru}</div>
                   {w.example && (
                     <div
                       style={{
@@ -585,6 +600,7 @@ export function WordsList({
                         fontSize: '0.8rem',
                         marginTop: 4,
                         fontStyle: 'italic',
+                        overflowWrap: 'anywhere',
                       }}
                     >
                       «{w.example}»
