@@ -813,7 +813,7 @@ export function WordsList({
               // narrow column on phone-width screens, wrapping one or two
               // words per line.
               <div className="flex flex-col gap-3 rounded-lg p-3" style={{ background: '#2A1218', border: '1px solid #C41E3A' }}>
-                <p style={{ color: '#F5F1E8', fontSize: '0.85rem' }}>
+                <p style={{ color: '#F5F1E8', fontSize: '0.85rem', overflowWrap: 'anywhere' }}>
                   Обрисати <strong>{w.sr}</strong>? Ово укључује њене тагове, везе и статистику, и не може се
                   опозвати.
                 </p>
