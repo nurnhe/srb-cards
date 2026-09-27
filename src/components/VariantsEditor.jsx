@@ -95,7 +95,7 @@ export function VariantsEditor({ variants, onChange, srWord }) {
           }}
           placeholder="упиши превод и Enter"
           autoComplete="off"
-          className="flex-1 rounded-lg px-3.5 py-2.5 outline-none"
+          className="flex-1 min-w-0 rounded-lg px-3.5 py-2.5 outline-none"
           style={{ fontFamily: FONT_DISPLAY, fontSize: '1rem', background: '#F5F1E8', color: '#1C2333', border: '1.5px solid transparent' }}
         />
         <button
