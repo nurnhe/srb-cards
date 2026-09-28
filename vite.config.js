@@ -3,6 +3,14 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    // Vitest's default exclude list doesn't know about git worktrees other
+    // Claude sessions create under .claude/worktrees/ (see CLAUDE.md's own
+    // note that this repo's worktree stash is shared) — without this, a
+    // concurrent session's checked-out copy gets scanned too, double-running
+    // every test and failing on its own not-yet-`npm install`ed backend.
+    exclude: ['**/node_modules/**', '**/dist/**', '**/.{idea,git,cache,output,temp}/**', '**/.claude/**'],
+  },
   server: {
     // 0.0.0.0 so the port mapping works when this runs inside Docker.
     host: true,

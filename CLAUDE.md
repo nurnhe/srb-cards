@@ -56,8 +56,14 @@ filtering (see "Database schema" below for the actual policies).
 - Small shared components live in `src/components/` (`IpaText`, `PronounceButton`,
   `InflectionTables`, `VariantsEditor`, `WordStats`, `Pills`). The three big
   screens are `src/AddWord.jsx`, `src/WordsList.jsx` and `src/Practice.jsx`.
-  `App.jsx` now holds only the app shell (`App`, `Header`, `TabBar`) and the data
-  handling for words and tags.
+  `App.jsx` now holds only the app shell (`App`, `Header`, `TabBar`) and the
+  auth/session state (`authed`, `passwordFlow`, the Supabase auth-state
+  listener). The words/tags/groups state and all ~20 mutation callbacks
+  (`addWord`, `recordAnswer`, `importWords`, `createGroup`...) live in
+  `src/useVocabulary.js` (`useVocabulary(authed)`), tested without a browser
+  in `src/useVocabulary.test.jsx` (a tiny local `act()`/`createRoot` harness,
+  since no hook-testing library is installed) — App just calls the hook and
+  passes its return values down as props.
 - **`backend/src/auth.js`**'s `requireAuth` middleware reads the
   `Authorization: Bearer <token>` header the frontend sends, and builds a
   **fresh Supabase client per request** using the `anon` key with that token
