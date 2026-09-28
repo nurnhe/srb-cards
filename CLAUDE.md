@@ -72,6 +72,15 @@ filtering (see "Database schema" below for the actual policies).
     explicitly. Calling `getUser()` with no argument reads the client's own
     internal session state, which a freshly-built per-request client never
     has — every request would 401.
+  - That `getUser()` call is a real network round trip to Supabase Auth —
+    measured at ~70-160ms, occasionally much more. `backend/src/authCache.js`
+    caches token → user id for 60 seconds so a burst of same-token requests
+    (an import, the part-of-speech pass — one request per word) only pays that
+    cost once. Accepted trade-off: a just-revoked token can still be accepted
+    for up to 60s here, but that's no looser than what already happens one
+    layer down — every data query still goes through PostgREST, which
+    validates the same JWT's signature/expiry itself and enforces RLS from
+    its own claims, independent of this cache.
 - **`src/supabaseClient.js`** builds a browser Supabase client (`getSupabase()`,
   created once after fetching the URL and anon key from `/api/config`) used
   *only* for auth (`signInWithPassword`, `signOut`, `getSession`,
