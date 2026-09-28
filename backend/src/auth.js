@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { authFailureStatus } from './http.js';
+import { getCachedUserId, setCachedUserId } from './authCache.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
@@ -25,6 +26,18 @@ export async function requireAuth(req, res, next) {
     global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false },
   });
+
+  // A request bearing a token already checked in the last minute skips the
+  // network round trip to Supabase Auth — see authCache.js for why this is
+  // safe. Every actual data query below still goes through req.supabase,
+  // which enforces RLS from the token itself regardless of this cache.
+  const cachedUserId = getCachedUserId(token);
+  if (cachedUserId) {
+    req.supabase = userClient;
+    req.userId = cachedUserId;
+    return next();
+  }
+
   // getUser() must be given the token explicitly — called with no argument
   // it reads the client's own internal session state instead, which this
   // fresh per-request client never has (every request would 401).
@@ -39,6 +52,7 @@ export async function requireAuth(req, res, next) {
   }
   if (!data?.user) return res.status(401).json({ error: 'Unauthorized' });
 
+  setCachedUserId(token, data.user.id);
   req.supabase = userClient;
   req.userId = data.user.id;
   next();
