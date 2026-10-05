@@ -3,14 +3,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Loader2, Search } from 'lucide-react';
 import { FONT_DISPLAY, FONT_BODY, FONT_MONO } from '../theme';
-import { fetchTranslationSuggestions } from '../wiktionary';
-import { mergeVariants } from '../logic';
+import { fetchTranslationSuggestions, fetchRuWiktionarySuggestions } from '../wiktionary';
+import { mergeVariants, combineSuggestionSources } from '../logic';
 
 // Manages a list of accepted translation variants as chips: manual add,
-// remove, plus one-click suggestions fetched from a translation API.
+// remove, plus one-click suggestions fetched from two translation sources —
+// MyMemory first (`suggestions`), then Russian Wiktionary in its own row
+// labelled "WIKI" (`wikiSuggestions`), which links to the article they came
+// from — Wiktionary's licence (CC BY-SA) asks for that credit.
 export function VariantsEditor({ variants, onChange, srWord }) {
   const [draft, setDraft] = useState('');
   const [suggestions, setSuggestions] = useState([]);
+  const [wikiSuggestions, setWikiSuggestions] = useState([]);
+  const [wikiTitle, setWikiTitle] = useState(null);
   const [suggestState, setSuggestState] = useState('idle'); // idle | loading | notfound | error
   // srWord is a prop, not state this component sets itself — this ref tracks
   // its latest value (no deps, so it updates after every render) so suggest()
@@ -38,25 +43,30 @@ export function VariantsEditor({ variants, onChange, srWord }) {
     const word = srWord.trim();
     if (!word) return;
     setSuggestState('loading');
-    try {
-      const found = await fetchTranslationSuggestions(word);
-      // The word field may have moved on to a different word while this was
-      // in flight — a slower, now-stale response must not overwrite
-      // suggestions for whatever's showing now.
-      if (srWordRef.current.trim() !== word) return;
-      const fresh = found.filter((f) => !variants.some((v) => v.toLowerCase() === f.toLowerCase()));
-      if (fresh.length === 0) {
-        setSuggestState('notfound');
-        setSuggestions([]);
-      } else {
-        setSuggestions(fresh);
-        setSuggestState('idle');
-      }
-    } catch (e) {
-      if (srWordRef.current.trim() !== word) return;
-      setSuggestState('error');
-      setSuggestions([]);
-    }
+    // Both sources at once; one failing just leaves its row empty.
+    const [myMemory, wiki] = await Promise.allSettled([
+      fetchTranslationSuggestions(word),
+      fetchRuWiktionarySuggestions(word),
+    ]);
+    // The word field may have moved on to a different word while this was
+    // in flight — a slower, now-stale response must not overwrite
+    // suggestions for whatever's showing now.
+    if (srWordRef.current.trim() !== word) return;
+    const combined = combineSuggestionSources(
+      myMemory.status === 'fulfilled' ? myMemory.value : null,
+      wiki.status === 'fulfilled' ? wiki.value.suggestions : null,
+      variants
+    );
+    setSuggestions(combined.main);
+    setWikiSuggestions(combined.extra);
+    setWikiTitle(wiki.status === 'fulfilled' ? wiki.value.title : null);
+    setSuggestState(combined.state);
+  };
+
+  const pickSuggestion = (s) => {
+    addVariant(s);
+    setSuggestions((prev) => prev.filter((x) => x !== s));
+    setWikiSuggestions((prev) => prev.filter((x) => x !== s));
   };
 
   return (
@@ -127,27 +137,60 @@ export function VariantsEditor({ variants, onChange, srWord }) {
           Претрага тренутно није доступна — унеси ручно.
         </p>
       )}
-      {suggestions.length > 0 && (
+      {(suggestions.length > 0 || wikiSuggestions.length > 0) && (
         <div className="mt-2">
           <div style={{ color: '#5C6690', fontSize: '0.7rem', marginBottom: 5, fontFamily: FONT_MONO }}>
             ПРЕДЛОЗИ (КЛИКНИ ДА ДОДАШ)
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {suggestions.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => {
-                  addVariant(s);
-                  setSuggestions((prev) => prev.filter((x) => x !== s));
+          {suggestions.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {suggestions.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => pickSuggestion(s)}
+                  className="rounded-full px-2.5 py-1"
+                  style={{ background: '#2A2140', color: '#C9A8E8', fontSize: '0.82rem', border: '1px dashed #4A3A66' }}
+                >
+                  + {s}
+                </button>
+              ))}
+            </div>
+          )}
+          {wikiSuggestions.length > 0 && (
+            <div
+              className="flex flex-wrap items-center gap-1.5"
+              style={{ marginTop: suggestions.length > 0 ? 6 : 0 }}
+            >
+              <a
+                href={`https://ru.wiktionary.org/wiki/${encodeURIComponent(wikiTitle || srWord.trim())}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Значења из руског Викиречника (CC BY-SA) — отвори чланак"
+                style={{
+                  color: '#D4A54A',
+                  fontSize: '0.65rem',
+                  fontFamily: FONT_MONO,
+                  letterSpacing: '0.05em',
+                  textDecoration: 'underline dotted',
+                  textUnderlineOffset: 2,
                 }}
-                className="rounded-full px-2.5 py-1"
-                style={{ background: '#2A2140', color: '#C9A8E8', fontSize: '0.82rem', border: '1px dashed #4A3A66' }}
               >
-                + {s}
-              </button>
-            ))}
-          </div>
+                WIKI
+              </a>
+              {wikiSuggestions.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => pickSuggestion(s)}
+                  className="rounded-full px-2.5 py-1"
+                  style={{ background: 'transparent', color: '#D4A54A', fontSize: '0.82rem', border: '1px dashed #6B5A33' }}
+                >
+                  + {s}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

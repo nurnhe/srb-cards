@@ -461,6 +461,30 @@ which needs a browser.
 - **MyMemory** (`api.mymemory.translated.net`) — free, CORS-enabled,
   translation suggestions for the "Предложи" button. Machine-translated,
   quality varies; presented as suggestions to review, not auto-accepted.
+- **Russian Wiktionary** (`ru.wiktionary.org`, MediaWiki API) — the second
+  source for "Предложи": Serbian entries there give the meanings directly in
+  Russian. `fetchRuWiktionarySuggestions` asks for both spellings of the word
+  in one request (Serbian pages are titled in Cyrillic *or* Latin, e.g.
+  `јести` and `jesti`); `parseRuWiktionaryMeanings` reads only the lines under
+  "Значение" inside the `= {{-sr-}} =` section (not other languages, not
+  synonyms), drops templates/examples, and reads `{{as ru}}` as "same word as
+  in Russian". Tested against saved pages in `src/__fixtures__/ruwiktionary/`.
+  Coverage is patchy (roughly 60% of common words — e.g. `кућа`, `видети`
+  have no Serbian entry), so its suggestions come **after** MyMemory's, in
+  their own row labelled "WIKI" (`VariantsEditor`; merged by
+  `combineSuggestionSources` in `logic.js`); when MyMemory finds nothing, only
+  they show. Related words on the Add Word form are pre-filled from MyMemory
+  and fall back to Wiktionary (`firstTranslationSuggestion`). The "Предложи"
+  behaviour is covered by `src/components/VariantsEditor.test.jsx` — the
+  project's first component test, rendered in jsdom with React's own
+  `createRoot` + `act` and a fake `fetch` (no testing library). Licence is CC BY-SA, which is why the "WIKI"
+  label links to the article the meanings came from — keep that link, and
+  only ever look up one word at a time on request (no bulk copying of the
+  dictionary). No `Api-User-Agent` header on purpose: Wikimedia asks for one,
+  but a custom header makes the browser send an extra preflight request before
+  every lookup; add it (without contact details) only if requests start being
+  refused. Croatian/Bosnian sections are ignored for now (`kuća` only has a
+  Croatian one).
 - **Tatoeba** (`api.tatoeba.org/unstable/sentences`) — best-effort Serbian
   example sentence lookup. Coverage for Serbian is thin; frequently finds
   nothing, and that's expected, not a bug. Manual entry is the reliable

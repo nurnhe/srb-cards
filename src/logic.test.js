@@ -14,6 +14,7 @@ import {
   isAnswerCorrect,
   isRelevantTranslationMatch,
   isPlausibleRussianText,
+  combineSuggestionSources,
   suggestTagsFromRelatedWords,
   filterWordsByQuery,
   levenshteinDistance,
@@ -1162,6 +1163,43 @@ describe('scopeWords', () => {
   });
 });
 
+
+describe('combineSuggestionSources', () => {
+  it('keeps MyMemory first and drops Wiktionary repeats of it', () => {
+    expect(combineSuggestionSources(['дом', 'здание'], ['Дом', 'домик'])).toEqual({
+      main: ['дом', 'здание'],
+      extra: ['домик'],
+      state: 'idle',
+    });
+  });
+
+  it('leaves out translations already chosen', () => {
+    expect(combineSuggestionSources(['дом', 'здание'], ['домик'], ['Дом'])).toEqual({
+      main: ['здание'],
+      extra: ['домик'],
+      state: 'idle',
+    });
+  });
+
+  it('shows only Wiktionary when MyMemory has nothing', () => {
+    expect(combineSuggestionSources([], ['домик'])).toEqual({ main: [], extra: ['домик'], state: 'idle' });
+  });
+
+  it('uses whichever source still answered when the other failed', () => {
+    expect(combineSuggestionSources(null, ['домик'])).toEqual({ main: [], extra: ['домик'], state: 'idle' });
+    expect(combineSuggestionSources(['дом'], null)).toEqual({ main: ['дом'], extra: [], state: 'idle' });
+  });
+
+  it('is "notfound" when nothing new is left, as before', () => {
+    expect(combineSuggestionSources([], []).state).toBe('notfound');
+    expect(combineSuggestionSources(['дом'], ['дом'], ['дом']).state).toBe('notfound');
+    expect(combineSuggestionSources(null, []).state).toBe('notfound');
+  });
+
+  it('is "error" only when both sources failed', () => {
+    expect(combineSuggestionSources(null, null)).toEqual({ main: [], extra: [], state: 'error' });
+  });
+});
 
 describe('describeSaveError', () => {
   it('names the field and its limit when the server said something was too long', () => {
