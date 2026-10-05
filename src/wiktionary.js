@@ -8,6 +8,7 @@ import {
   stripPitchAccent,
   isCyrillic,
   cyrillicToLatin,
+  latinToCyrillic,
   posTagNamesFromHeadingIds,
 } from './logic';
 
@@ -43,9 +44,12 @@ export async function fetchExample(srWord) {
 
 const pageCache = new Map();
 const PAGE_CACHE_LIMIT = 30;
+// Same idea for Russian Wiktionary lookups (fetchRuWiktionarySuggestions below).
+const ruWiktionaryCache = new Map();
 
 export function clearWiktionaryCache() {
   pageCache.clear();
+  ruWiktionaryCache.clear();
 }
 
 // Resolves to the parsed page, or null when the page doesn't exist. Rejects on
@@ -231,6 +235,174 @@ export async function fetchTranslationSuggestions(srWord) {
     .sort((a, b) => (b.match || 0) - (a.match || 0) || (b.quality || 0) - (a.quality || 0))
     .forEach((m) => add(m.translation));
   return candidates.slice(0, 5);
+}
+
+// ---- Russian Wiktionary: Serbian words with their meanings in Russian ------
+//
+// Second source of "Предложи" suggestions, shown after MyMemory's in a row
+// labelled "WIKI". Russian Wiktionary has a Serbian section on many (not all)
+// common words, and gives the meanings directly in Russian. Its text is
+// CC BY-SA, which is why the row links to the article it came from. Only one
+// word at a time, on request — never copy the dictionary in bulk.
+//
+// No Api-User-Agent header on purpose: a custom header makes the browser send
+// an extra preflight request before every lookup (Wikimedia doesn't let it be
+// remembered). Add one — without contact details — only if requests start
+// being refused.
+
+const MAX_RU_MEANINGS = 6;
+
+// A level-1 language heading, e.g. "= {{-sr-}} =" or "= {{-ru-|nocat}} =".
+const LANGUAGE_HEADING_RE = /^=(?!=)\s*\{\{-([^|}]+?)-(?:\|[^}]*)?\}\}\s*=\s*$/;
+
+// Drops every {{template}}, including templates nested inside one another
+// (examples often contain {{выдел|…}}).
+function stripTemplates(text) {
+  let out = '';
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.startsWith('{{', i)) {
+      depth++;
+      i++;
+    } else if (depth > 0 && text.startsWith('}}', i)) {
+      depth--;
+      i++;
+    } else if (depth === 0) {
+      out += text[i];
+    }
+  }
+  return out;
+}
+
+// The meaning lines ("# ...") under every "Значение" heading of the Serbian
+// section, or [] when the page has no Serbian section.
+function serbianMeaningLines(wikitext) {
+  const lines = [];
+  let inSerbian = false;
+  let inMeanings = false;
+  for (const line of (wikitext || '').split('\n')) {
+    const language = line.match(LANGUAGE_HEADING_RE);
+    if (language) {
+      inSerbian = language[1] === 'sr';
+      inMeanings = false;
+    } else if (!inSerbian) {
+      continue;
+    } else if (/^=+/.test(line)) {
+      inMeanings = /^=+\s*Значение\s*=+\s*$/.test(line);
+    } else if (inMeanings && /^#+(?![:*])/.test(line)) {
+      lines.push(line.replace(/^#+/, ''));
+    }
+  }
+  return lines;
+}
+
+// Russian meanings of the Serbian word on one Russian Wiktionary page, cleaned
+// up for use as translation suggestions. `title` is the page's title — needed
+// for {{as ru}} ("same as the Russian word"), as on the page "рука".
+export function parseRuWiktionaryMeanings(wikitext, title) {
+  const meanings = [];
+  const seen = new Set();
+  const add = (text) => {
+    const t = text.replace(/́/g, '').replace(/\s+/g, ' ').replace(/^[\s.:–—-]+|[\s.:–—-]+$/g, '');
+    // Longer than a few words is a description of the meaning, not a translation.
+    if (!t || t.split(' ').length > 4 || !isPlausibleRussianText(t)) return;
+    const key = t.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    meanings.push(t);
+  };
+  for (const line of serbianMeaningLines(wikitext)) {
+    if (/\{\{\s*as ru\s*(\|[^}]*)?\}\}/.test(line) && title) {
+      add(isCyrillic(title) ? title : latinToCyrillic(title));
+    }
+    const text = stripTemplates(
+      line
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<ref[^>]*\/>/g, '')
+        .replace(/<ref[^>]*>[\s\S]*?<\/ref>/g, '')
+    )
+      .replace(/\[\[[^\]|]*\|([^\]]*)\]\]/g, '$1')
+      .replace(/\[\[([^\]]*)\]\]/g, '$1')
+      .replace(/'{2,}/g, '')
+      .replace(/\([^)]*\)/g, '');
+    text.split(/[,;]/).forEach(add);
+  }
+  return meanings.slice(0, MAX_RU_MEANINGS);
+}
+
+// Looks a word up in Russian Wiktionary, under both of its spellings (Serbian
+// pages there are titled in Cyrillic or in Latin), in one request. Resolves to
+// { suggestions, title } — title is the page the meanings came from, for the
+// link — or { suggestions: [], title: null } when neither page has a Serbian
+// section. Rejects when the request fails, so the caller can tell "nothing
+// there" from "couldn't ask". Results are kept like Wiktionary pages above: a
+// "nothing there" answer is remembered, a failure is not.
+export function fetchRuWiktionarySuggestions(srWord) {
+  const word = (srWord || '').trim().toLowerCase();
+  if (!word) return Promise.resolve({ suggestions: [], title: null });
+  const cached = ruWiktionaryCache.get(word);
+  if (cached) return cached;
+
+  const cyrillic = isCyrillic(word) ? word : latinToCyrillic(word);
+  const latin = isCyrillic(word) ? cyrillicToLatin(word) : word;
+  const titles = [...new Set([cyrillic, latin])];
+
+  const request = (async () => {
+    const params = new URLSearchParams({
+      action: 'query',
+      prop: 'revisions',
+      rvprop: 'content',
+      rvslots: 'main',
+      format: 'json',
+      formatversion: '2',
+      origin: '*',
+      titles: titles.join('|'),
+    });
+    const res = await fetch(`https://ru.wiktionary.org/w/api.php?${params}`);
+    if (!res.ok) throw new Error(`Russian Wiktionary request failed (${res.status})`);
+    const json = await res.json();
+    if (json.error) throw new Error(`Russian Wiktionary: ${json.error.code}`);
+
+    // Cyrillic page first: it's the usual home of a Serbian entry.
+    const pages = (json.query?.pages || [])
+      .filter((p) => !p.missing)
+      .sort((a, b) => Number(isCyrillic(b.title)) - Number(isCyrillic(a.title)));
+    const suggestions = [];
+    let title = null;
+    for (const page of pages) {
+      const found = parseRuWiktionaryMeanings(page.revisions?.[0]?.slots?.main?.content, page.title);
+      for (const m of found) {
+        if (!suggestions.some((s) => s.toLowerCase() === m.toLowerCase())) suggestions.push(m);
+      }
+      if (found.length > 0 && !title) title = page.title;
+    }
+    return { suggestions: suggestions.slice(0, MAX_RU_MEANINGS), title };
+  })();
+
+  ruWiktionaryCache.set(word, request);
+  request.catch(() => {
+    if (ruWiktionaryCache.get(word) === request) ruWiktionaryCache.delete(word);
+  });
+  if (ruWiktionaryCache.size > PAGE_CACHE_LIMIT) ruWiktionaryCache.delete(ruWiktionaryCache.keys().next().value);
+  return request;
+}
+
+// The one translation pre-filled for a related word on the Add Word form:
+// MyMemory's first suggestion, as before; Russian Wiktionary's only when
+// MyMemory has nothing or fails. '' when neither has one — never rejects.
+export async function firstTranslationSuggestion(srWord) {
+  try {
+    const [first] = await fetchTranslationSuggestions(srWord);
+    if (first) return first;
+  } catch (e) {
+    // fall through to Wiktionary
+  }
+  try {
+    const { suggestions } = await fetchRuWiktionarySuggestions(srWord);
+    return suggestions[0] || '';
+  } catch (e) {
+    return '';
+  }
 }
 
 // speechSynthesis.getVoices() often returns an empty list on the very
