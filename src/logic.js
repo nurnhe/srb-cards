@@ -159,6 +159,33 @@ export function mergeVariants(existing, text) {
   return result;
 }
 
+// Puts together the "Предложи" results from the two sources: MyMemory (`main`,
+// shown first, as it always was) and Russian Wiktionary (`extra`, shown after
+// it in its own row labelled "WIKI"). Either argument is `null` when that source's
+// request failed. Anything already chosen as a translation is left out, and
+// `extra` also leaves out whatever `main` already offers, so nothing appears
+// twice. `state` is 'error' only when both sources failed, 'notfound' when
+// nothing new is left to show, otherwise 'idle'.
+export function combineSuggestionSources(main, extra, existingVariants = []) {
+  const taken = new Set(existingVariants.map((v) => v.toLowerCase()));
+  const pick = (list) => {
+    const out = [];
+    for (const s of list || []) {
+      const key = s.toLowerCase();
+      if (taken.has(key)) continue;
+      taken.add(key);
+      out.push(s);
+    }
+    return out;
+  };
+  const mainOut = pick(main);
+  const extraOut = pick(extra);
+  let state = 'idle';
+  if (main === null && extra === null) state = 'error';
+  else if (mainOut.length === 0 && extraOut.length === 0) state = 'notfound';
+  return { main: mainOut, extra: extraOut, state };
+}
+
 // Fisher–Yates shuffle
 export function shuffle(arr) {
   const a = [...arr];

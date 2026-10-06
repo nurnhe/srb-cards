@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Loader2, Search, Check, Plus } from 'lucide-react';
 import { FONT_MONO, FONT_DISPLAY, FONT_BODY } from './theme';
-import { fetchPartsOfSpeechFromWiktionary, fetchTranslationSuggestions, fetchRelatedWordsFromWiktionary, fetchInflectionTables, fetchExample } from './wiktionary';
+import { fetchPartsOfSpeechFromWiktionary, firstTranslationSuggestion, fetchRelatedWordsFromWiktionary, fetchInflectionTables, fetchExample } from './wiktionary';
 import { findDuplicateWord, findLikelyTypoOf, suggestTagsFromRelatedWords, otherScript } from './logic';
 import { PronounceButton } from './components/PronounceButton';
 import { IpaText } from './components/IpaText';
@@ -218,14 +218,8 @@ export function AddWord({ onAdd, goToList, words, tags, groups }) {
     // otherwise a slow response can silently clobber something newer.
     const stillCurrent = (prev) =>
       prev[word] && !prev[word].edited && relatedFetchSeqRef.current[word] === seq;
-    try {
-      const suggestions = await fetchTranslationSuggestions(word);
-      setRelatedSelections((prev) =>
-        stillCurrent(prev) ? { ...prev, [word]: { ru: suggestions[0] || '', status: 'idle' } } : prev
-      );
-    } catch (e) {
-      setRelatedSelections((prev) => (stillCurrent(prev) ? { ...prev, [word]: { ru: '', status: 'idle' } } : prev));
-    }
+    const ru = await firstTranslationSuggestion(word);
+    setRelatedSelections((prev) => (stillCurrent(prev) ? { ...prev, [word]: { ru, status: 'idle' } } : prev));
   };
 
   const setRelatedTranslation = (word, ru) => {
