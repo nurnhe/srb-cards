@@ -220,4 +220,23 @@ describe('VariantsEditor — "Предложи"', () => {
     expect(chipButtons()).toEqual([]);
     expect(wikiLink()).toBeNull();
   });
+
+  it('gives the button back when the word was changed while it was loading', async () => {
+    let answerMyMemory;
+    answer({
+      myMemory: () => new Promise((resolve) => (answerMyMemory = () => resolve(myMemorySays('красивый')))),
+      wiktionary: wiktionarySays('леп', 'милый'),
+    });
+    await render('lep');
+    const find = () => [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Предложи'));
+    await act(async () => find().click());
+    expect(find().disabled).toBe(true);
+
+    await render('pas');
+    answerMyMemory();
+    await settle();
+
+    // Before the fix this stayed disabled with a spinner until a reload.
+    expect(find().disabled).toBe(false);
+  });
 });

@@ -306,6 +306,8 @@ export function parseRuWiktionaryMeanings(wikitext, title) {
     const t = text.replace(/́/g, '').replace(/\s+/g, ' ').replace(/^[\s.:–—-]+|[\s.:–—-]+$/g, '');
     // Longer than a few words is a description of the meaning, not a translation.
     if (!t || t.split(' ').length > 4 || !isPlausibleRussianText(t)) return;
+    // Only a joining word left over from removed brackets, e.g. "и".
+    if (/^(и|или|а|но)$/i.test(t)) return;
     const key = t.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
@@ -324,7 +326,9 @@ export function parseRuWiktionaryMeanings(wikitext, title) {
       .replace(/\[\[[^\]|]*\|([^\]]*)\]\]/g, '$1')
       .replace(/\[\[([^\]]*)\]\]/g, '$1')
       .replace(/'{2,}/g, '')
-      .replace(/\([^)]*\)/g, '');
+      .replace(/\([^)]*\)/g, '')
+      // Sense numbers ("1 (влага) и 2 (…)") are left over once the brackets go.
+      .replace(/(^|\s)\d+(?=\s|$)/g, ' ');
     text.split(/[,;]/).forEach(add);
   }
   return meanings.slice(0, MAX_RU_MEANINGS);

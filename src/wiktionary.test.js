@@ -241,6 +241,11 @@ describe('parseRuWiktionaryMeanings (edge cases)', () => {
     expect(parseRuWiktionaryMeanings('= {{-sr-}} =\n==== Значение ====\n# {{as ru}}', 'ruka')).toEqual(['рука']);
   });
 
+  it('drops sense numbers and the joining word left behind when the brackets go ("voda")', () => {
+    const voda = '= {{-sr-}} =\n==== Значение ====\n# 1 (влага) и 2 (H₂O)\n# жидкость';
+    expect(parseRuWiktionaryMeanings(voda, 'вода')).toEqual(['жидкость']);
+  });
+
   it('copes with an empty page', () => {
     expect(parseRuWiktionaryMeanings(undefined, 'x')).toEqual([]);
   });

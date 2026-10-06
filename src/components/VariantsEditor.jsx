@@ -24,6 +24,9 @@ export function VariantsEditor({ variants, onChange, srWord }) {
   useEffect(() => {
     srWordRef.current = srWord;
   });
+  // Counts "Предложи" clicks, so only the newest one is allowed to finish the
+  // loading state — an older request that comes back late just steps aside.
+  const suggestSeqRef = useRef(0);
 
   const addVariant = (text) => {
     const next = mergeVariants(variants, text);
@@ -42,6 +45,7 @@ export function VariantsEditor({ variants, onChange, srWord }) {
   const suggest = async () => {
     const word = srWord.trim();
     if (!word) return;
+    const seq = ++suggestSeqRef.current;
     setSuggestState('loading');
     // Both sources at once; one failing just leaves its row empty.
     const [myMemory, wiki] = await Promise.allSettled([
@@ -51,7 +55,14 @@ export function VariantsEditor({ variants, onChange, srWord }) {
     // The word field may have moved on to a different word while this was
     // in flight — a slower, now-stale response must not overwrite
     // suggestions for whatever's showing now.
-    if (srWordRef.current.trim() !== word) return;
+    if (seq !== suggestSeqRef.current) return;
+    if (srWordRef.current.trim() !== word) {
+      // Nothing to show for the old word, but this was the newest request, so
+      // nobody else will clear the spinner — without this the button stays
+      // disabled until the screen is reloaded.
+      setSuggestState('idle');
+      return;
+    }
     const combined = combineSuggestionSources(
       myMemory.status === 'fulfilled' ? myMemory.value : null,
       wiki.status === 'fulfilled' ? wiki.value.suggestions : null,
