@@ -545,16 +545,24 @@ export default function App() {
     return data;
   }, []);
 
-  const joinGroup = useCallback(async (code) => {
-    const { data, error } = await api.joinGroup(code);
-    if (error || !data) {
-      setStorageError('Не могу да се придружим групи — проверите код.');
-      return null;
-    }
-    setStorageError(null);
-    setGroups((prev) => (prev.some((g) => g.id === data.id) ? prev : [...prev, data]));
-    return data;
-  }, []);
+  // Joining makes the group's shared words visible, so the word list has to
+  // be fetched again — the same full reload leaving a group does. Without it
+  // the new member saw the group but none of its words until they reloaded
+  // the page (or closed and reopened the phone app).
+  const joinGroup = useCallback(
+    async (code) => {
+      const { data, error } = await api.joinGroup(code);
+      if (error || !data) {
+        setStorageError('Не могу да се придружим групи — проверите код.');
+        return null;
+      }
+      setStorageError(null);
+      setGroups((prev) => (prev.some((g) => g.id === data.id) ? prev : [...prev, data]));
+      await reloadAll();
+      return data;
+    },
+    [reloadAll]
+  );
 
   // A word visible only through this group (not owned by me) needs to
   // actually disappear from `words` once I leave — reconciling that by hand
