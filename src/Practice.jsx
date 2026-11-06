@@ -145,7 +145,7 @@ export function Practice({ words, tags, groups, onAnswer }) {
   }, [poolKey]);
 
   useEffect(() => {
-    if (feedback === null && inputRef.current) inputRef.current.focus();
+    if (feedback === null && inputRef.current) inputRef.current.focus({ preventScroll: true });
   }, [current, feedback]);
 
   // Once feedback is shown, the answer input is gone — nothing is focused to
