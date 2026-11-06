@@ -1,3 +1,11 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* The page's own background colour, so pulling past the top or bottom on a
+   phone (or the strip around the notch when it's opened from the home screen)
+   shows the dark navy instead of white. */
+html,
+body {
+  background: #12192e;
+}

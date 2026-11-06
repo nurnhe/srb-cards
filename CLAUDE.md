@@ -14,6 +14,12 @@ this app stores her vocabulary and quizzes her on it.
   stage; if you add another config file the build needs, copy it there too or the
   live site comes out unstyled. Kept on v3 on purpose: v4 changes defaults
   (borders, rings) and would shift the layout.
+- Phone install: the site is an installable web app (PWA). `public/` holds the
+  home-screen manifest (`manifest.webmanifest`) and icons (`icon.svg` is the
+  source; the PNGs were rendered from it), linked from `index.html`. No service
+  worker on purpose: every screen needs the API anyway, and a cache would risk
+  phones showing an old version after a deploy. The `Dockerfile` copies
+  `public/` into the build stage; without it the icons go missing.
 - Backend: Node + Express in `backend/`, talks to Supabase with
   `@supabase/supabase-js`. The browser never touches the database directly for
   data — it calls `/api/*` through `src/api.js`. It does talk to Supabase Auth
