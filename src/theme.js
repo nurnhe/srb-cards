@@ -6,6 +6,9 @@ import { useEffect } from 'react';
 export const FONT_DISPLAY = "'PT Serif', Georgia, serif";
 export const FONT_BODY = "'Inter', system-ui, sans-serif";
 export const FONT_MONO = "'JetBrains Mono', monospace";
+// The pronunciation line uses its own font with every IPA symbol in it —
+// see the note on 'SRB IPA' in index.css.
+export const FONT_IPA = "'SRB IPA', 'Noto Sans Mono', monospace";
 
 const FONT_LINK_ID = 'srb-flashcards-fonts';
 

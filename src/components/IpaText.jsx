@@ -1,7 +1,7 @@
 // Moved out of App.jsx unchanged (part of the file split).
 
 import React, { useEffect, useRef, useState } from 'react';
-import { FONT_MONO } from '../theme';
+import { FONT_IPA } from '../theme';
 import { fetchIpaFromWiktionary } from '../wiktionary';
 import { normalize } from '../logic';
 
@@ -81,7 +81,7 @@ export function IpaText({ text, size = '0.75em' }) {
   if (!text?.trim()) return null;
 
   return (
-    <span ref={ref} style={{ fontFamily: FONT_MONO, fontSize: size, color: '#8892AE' }}>
+    <span ref={ref} style={{ fontFamily: FONT_IPA, fontSize: size, color: '#8892AE' }}>
       {ipa}
     </span>
   );

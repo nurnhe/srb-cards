@@ -20,6 +20,10 @@ this app stores her vocabulary and quizzes her on it.
   worker on purpose: every screen needs the API anyway, and a cache would risk
   phones showing an old version after a deploy. The `Dockerfile` copies
   `public/` into the build stage; without it the icons go missing.
+- Pronunciation font: the IPA line (`IpaText`) uses its own font, `SRB IPA`
+  (`public/fonts/noto-sans-mono-ipa.woff2`, declared in `src/index.css`) — a
+  cut-down Noto Sans Mono (SIL Open Font License). JetBrains Mono has none of
+  the IPA symbols, and Android phones showed them as empty boxes.
 - Backend: Node + Express in `backend/`, talks to Supabase with
   `@supabase/supabase-js`. The browser never touches the database directly for
   data — it calls `/api/*` through `src/api.js`. It does talk to Supabase Auth
