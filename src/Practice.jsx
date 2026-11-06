@@ -57,6 +57,10 @@ export function Practice({ words, tags, groups, onAnswer }) {
   // Same reason as advanceRef — the timer's own interval below can't close
   // over a stale `current`/`feedback` from whichever render started it.
   const timeoutRef = useRef(() => {});
+  // What's typed in the answer box right now, readable from the timer's
+  // interval below without restarting it on every keystroke.
+  const inputValueRef = useRef('');
+  inputValueRef.current = input;
 
   const toggleTimer = () => {
     setTimerEnabled((prev) => {
@@ -71,8 +75,8 @@ export function Practice({ words, tags, groups, onAnswer }) {
     });
   };
 
-  // Counts down regardless of typing activity, per the task's own answered
-  // "open questions" — runs only while an answer is pending (not once
+  // Counts down while the answer box is empty (it holds still once something
+  // is typed — see the interval below) — runs only while an answer is pending (not once
   // feedback is showing) and only when the timer is switched on. Restarts
   // for every new card since this effect re-runs whenever `current` or
   // `feedback` changes.
@@ -86,6 +90,10 @@ export function Practice({ words, tags, groups, onAnswer }) {
     // testing: the displayed countdown reached 0, but nothing else happened.
     let remaining = PRACTICE_TIMER_SECONDS;
     const interval = setInterval(() => {
+      // Paused while an answer is being typed. Running out mid-typing swapped
+      // the answer box for the "time's up" screen, which closed the phone
+      // keyboard and made the page jump.
+      if (inputValueRef.current.trim()) return;
       remaining -= 1;
       setTimeLeft(remaining);
       if (remaining <= 0) {
