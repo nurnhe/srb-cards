@@ -40,6 +40,8 @@ FROM deps AS build
 
 COPY index.html vite.config.js tailwind.config.js postcss.config.js ./
 COPY src ./src
+# Icons and the home-screen manifest; Vite copies these into dist/ as they are.
+COPY public ./public
 RUN npm run build
 
 
