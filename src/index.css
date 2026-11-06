@@ -9,3 +9,18 @@ html,
 body {
   background: #12192e;
 }
+
+/* Font for the pronunciation (IPA) line. JetBrains Mono, the app's label
+   font, has none of the pronunciation symbols (ʃ, ɕ, ʒ, the ͡ tie between
+   two letters...), and many Android phones have no fallback font for them
+   either, so they showed up as empty boxes there. This is Noto Sans Mono
+   (SIL Open Font License), cut down to Latin letters, pronunciation symbols
+   and accent marks so it stays small (about 45 KB). It is only downloaded
+   on a screen that actually shows a pronunciation. */
+@font-face {
+  font-family: 'SRB IPA';
+  src: url('/fonts/noto-sans-mono-ipa.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
